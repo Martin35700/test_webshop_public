@@ -1,0 +1,1090 @@
+﻿@page "/admin/orders"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using webshop.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject EmailService EmailService
+@inject IWebHostEnvironment Environment
+@inject IJSRuntime JS
+
+<PageTitle>Rendeléskezelés - Admin</PageTitle>
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold m-0">Rendeléskezelés</h2>
+        <span class="badge bg-dark rounded-pill">Összesen: @(allOrders?.Count ?? 0) db</span>
+    </div>
+
+    @* --- TÖMEGES MŰVELETEK PANEL --- *@
+    @if (selectedOrderIds.Any())
+    {
+        <div class="alert alert-dark shadow-sm rounded-4 border-0 mb-4 animate__animated animate__fadeInDown">
+            @if (isProcessing)
+            {
+                @* FOLYAMATJELZŐ NÉZET (Ha dolgozik a rendszer) *@
+                <div class="d-flex align-items-center mb-2">
+                    <div class="spinner-border spinner-border-sm text-light me-3" role="status"></div>
+                    <div class="flex-grow-1">
+                        <h6 class="m-0 fw-bold text-white">@bulkCurrentAction</h6>
+                        <small class="text-white-50">Kérlek ne zárd be az ablakot, amíg a folyamat tart...</small>
+                    </div>
+                    <span class="text-white fw-bold">@bulkProcessedCount / @bulkTotalCount</span>
+                </div>
+
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                         style="width: @(bulkTotalCount > 0 ? (bulkProcessedCount * 100 / bulkTotalCount) : 0)%">
+                    </div>
+                </div>
+            }
+            else
+            {
+                @* NORMÁL NÉZET (Kiválasztók és gombok) *@
+                <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center">
+                        <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
+                            @selectedOrderIds.Count
+                        </div>
+                        <h6 class="m-0 fw-bold text-uppercase small text-white">Kijelölt rendelések módosítása</h6>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <select class="form-select form-select-sm" @bind="bulkPaymentStatus">
+                            <option value="">Fizetési állapot...</option>
+                            @foreach (var val in Enum.GetValues<PaymentStatus>())
+                            {
+                                <option value="@val">@val</option>
+                            }
+                        </select>
+
+                        <select class="form-select form-select-sm" @bind="bulkLogisticsStatus">
+                            <option value="">Logisztikai állapot...</option>
+                            @foreach (var val in Enum.GetValues<OrderStatus>())
+                            {
+                                <option value="@val">@GetStatusDisplayName(val)</option>
+                            }
+                        </select>
+
+                        <button class="btn btn-primary btn-sm px-4 rounded-pill" @onclick="ApplyBulkUpdate">Alkalmazás</button>
+                        <button class="btn btn-outline-light btn-sm rounded-pill" @onclick="() => selectedOrderIds.Clear()">Mégse</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @* --- SZŰRŐ PANEL --- *@
+    <div class="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-light">
+        <div class="row g-3">
+            @* 1. Sor: Szöveges kereső és állapotok *@
+            <div class="col-md-4">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Keresés (Vevő, Email, Termék, ID)</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white border-0"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control border-0 shadow-none"
+                           placeholder="Keresés..."
+                           disabled="@isProcessing"
+                           @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Logisztika</label>
+                <select class="form-select form-select-sm border-0 shadow-none" @bind="filterStatus" disabled="@isProcessing">
+                    <option value="">Minden állapot</option>
+                    @foreach (var status in Enum.GetValues<OrderStatus>())
+                    {
+                        <option value="@status">@GetStatusDisplayName(status)</option>
+                    }
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Fizetési állapot</label>
+                <select class="form-select form-select-sm border-0 shadow-none" @bind="filterPayment" disabled="@isProcessing">
+                    <option value="">Minden állapot</option>
+                    @foreach (var pStatus in Enum.GetValues<PaymentStatus>())
+                    {
+                        <option value="@pStatus">@pStatus</option>
+                    }
+                </select>
+            </div>
+
+            @* 2. Sor: Módok és Dátumok *@
+            <div class="col-md-3">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Szállítási mód</label>
+                <select class="form-select form-select-sm border-0 shadow-none" @bind="filterShippingMethod" disabled="@isProcessing">
+                    <option value="">Összes</option>
+                    <option value="Házhozszállítás">Házhozszállítás</option>
+                    <option value="Személyes">Személyes átvétel</option>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Fizetési mód</label>
+                <select class="form-select form-select-sm border-0 shadow-none" @bind="filterPaymentMethod" disabled="@isProcessing">
+                    <option value="">Összes</option>
+                    <option value="Utalás">Utalás</option>
+                    <option value="Bankkártya">Bankkártya</option>
+                    <option value="Utánvét">Utánvét</option>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Dátumtól</label>
+                <input type="date" class="form-control form-control-sm border-0 shadow-none" @bind="filterDateFrom" disabled="@isProcessing" />
+            </div>
+
+            <div class="col-md-3">
+                <label class="small fw-bold text-muted mb-1 text-uppercase">Dátumig</label>
+                <div class="d-flex gap-2">
+                    <input type="date" class="form-control form-control-sm border-0 shadow-none" @bind="filterDateTo" disabled="@isProcessing" />
+                    <button class="btn btn-outline-secondary btn-sm rounded-pill" @onclick="ClearFilters" title="Szűrők törlése" disabled="@isProcessing">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* --- TABLÁZAT --- *@
+    @if (allOrders == null)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary"></div>
+        </div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-dark text-white">
+                        <tr>
+                            <th class="ps-3 py-3 text-center" style="width: 50px;">
+                                <input type="checkbox" class="form-check-input" @onchange="ToggleSelectAll" disabled="@isProcessing" />
+                            </th>
+                            <th style="cursor:pointer" @onclick='() => SortTable("Id")'>
+                                ID @GetSortIcon("Id")
+                            </th>
+                            <th style="cursor:pointer" @onclick='() => SortTable("CustomerName")'>
+                                Vásárló @GetSortIcon("CustomerName")
+                            </th>
+                            <th>Módok</th>
+                            <th>Összekészítve</th>
+                            <th style="cursor:pointer" @onclick='() => SortTable("TotalAmount")'>
+                                Összeg @GetSortIcon("TotalAmount")
+                            </th>
+                            <th>Fizetés</th>
+                            <th>Logisztika</th>
+                            <th class="text-end pe-4">Műveletek</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var order in FilteredAndSortedOrders)
+                        {
+                            <tr>
+                                <td class="ps-3 text-center">
+                                    <input type="checkbox" class="form-check-input"
+                                           checked="@selectedOrderIds.Contains(order.Id)"
+                                           disabled="@isProcessing"
+                                           @onchange='(e) => ToggleOrderSelection(order.Id, e.Value)' />
+                                </td>
+                                <td class="fw-bold">#@order.Id</td>
+                                <td>
+                                    <div class="fw-bold">@order.CustomerName</div>
+                                    <div class="small text-muted">@order.OrderDate.ToString("yyyy.MM.dd. HH:mm")</div>
+                                </td>
+                                <td>
+                                    <div class="small fw-bold text-dark"><i class="bi bi-truck me-1"></i> @order.ShippingMethod</div>
+                                    <div class="small text-muted"><i class="bi bi-credit-card me-1"></i> @order.PaymentMethod</div>
+                                </td>
+                                <td style="min-width: 140px;">
+                                    @{
+                                        var picked = order.Items?.Count(i => i.IsPicked) ?? 0;
+                                        var total = order.Items?.Count ?? 0;
+                                        var progress = total > 0 ? (int)((double)picked / total * 100) : 0;
+                                    }
+                                    <div class="d-flex align-items-center gap-2">
+                                        <div class="progress flex-grow-1" style="height: 8px;">
+                                            <div class="progress-bar @(progress == 100 ? "bg-success" : "bg-primary")" style="width: @progress%"></div>
+                                        </div>
+                                        <span class="small fw-bold">@picked/@total</span>
+                                    </div>
+                                </td>
+                                <td class="fw-bold text-primary">@order.TotalAmount.ToString("N0") Ft</td>
+                                <td>
+                                    <span class="badge rounded-pill @GetPaymentClass(order.PaymentStatus)">
+                                        @order.PaymentStatus
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge rounded-pill @GetStatusClass(order.Status)">
+                                        @GetStatusDisplayName(order.Status)
+                                    </span>
+                                </td>
+                                <td class="text-end pe-4">
+                                    <button class="btn btn-sm btn-dark rounded-pill px-3 shadow-sm"
+                                            disabled="@isProcessing"
+                                            @onclick="() => SelectOrder(order.Id)">
+                                        Kezelés
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@* --- MODAL ABLAK --- *@
+@if (selectedOrder != null)
+{
+    <div class="modal d-block shadow animate__animated animate__fadeIn" tabindex="-1" style="background: rgba(0,0,0,0.7); z-index: 1050;">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                @* MODAL HEADER *@
+                <div class="modal-header bg-light border-0 py-3">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-receipt fs-4 text-primary me-2"></i>
+                        <h5 class="fw-bold m-0">Rendelés kezelése: #@selectedOrder.Id</h5>
+                    </div>
+                    <button type="button" class="btn-close shadow-none" @onclick="CloseModal" disabled="@isProcessing"></button>
+                </div>
+
+                <div class="modal-body p-4 position-relative">
+                    @* TÖLTÉS JELZŐ (Csak részletes adatlekéréskor) *@
+                    @if (isDetailsLoading)
+                    {
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted fw-bold">Tételek betöltése...</p>
+                        </div>
+                    }
+                    else
+                    {
+                        @* FELDOLGOZÁS ALATTI OVERLAY (Blokkolja a kattintást mentés közben) *@
+                        @if (isProcessing)
+                        {
+                            <div class="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center bg-white bg-opacity-75" style="z-index: 10; border-radius: 1rem;">
+                                <div class="spinner-grow text-primary mb-2" role="status"></div>
+                                <span class="fw-bold text-dark">Módosítások mentése...</span>
+                            </div>
+                        }
+
+                        <div class="row mb-4 g-4">
+                            @* 1. OSZLOP: Szállítási adatok *@
+                            <div class="col-md-4 border-end">
+                                <h6 class="text-muted small fw-bold text-uppercase mb-3"><i class="bi bi-truck me-2"></i>Szállítási adatok</h6>
+                                <div class="bg-light p-3 rounded-4 h-100 shadow-sm border-0">
+                                    <p class="mb-1 fw-bold text-dark">@selectedOrder.CustomerName</p>
+                                    <p class="mb-1 small text-secondary"><i class="bi bi-envelope me-1"></i> @selectedOrder.Email</p>
+                                    @if (!string.IsNullOrWhiteSpace(selectedOrder.PhoneNumber))
+                                    {
+                                        <p class="mb-1 small text-secondary"><i class="bi bi-telephone me-1"></i> @selectedOrder.PhoneNumber</p>
+                                    }
+                                    <p class="mb-0 small text-dark mt-2">
+                                        <i class="bi bi-geo-alt me-1"></i> @selectedOrder.Zip @selectedOrder.City, @selectedOrder.Address
+                                    </p>
+                                </div>
+                            </div>
+
+                            @* 2. OSZLOP: Számlázási adatok *@
+                            <div class="col-md-4 border-end">
+                                <h6 class="text-muted small fw-bold text-uppercase mb-3"><i class="bi bi-receipt me-2"></i>Számlázási adatok</h6>
+                                <div class="bg-light p-3 rounded-4 h-100 shadow-sm border-0">
+                                    @{
+                                        // Legacy logika: ha hiányzik, a szállításit tekintjük annak
+                                        var bZip = string.IsNullOrWhiteSpace(selectedOrder.BillingZip) ? selectedOrder.Zip : selectedOrder.BillingZip;
+                                        var bCity = string.IsNullOrWhiteSpace(selectedOrder.BillingCity) ? selectedOrder.City : selectedOrder.BillingCity;
+                                        var bAddress = string.IsNullOrWhiteSpace(selectedOrder.BillingAddress) ? selectedOrder.Address : selectedOrder.BillingAddress;
+                                    }
+                                    <p class="mb-1 fw-bold text-dark">@selectedOrder.CustomerName</p>
+                                    <p class="mb-1 small text-secondary">
+                                        <i class="bi bi-geo-alt me-1"></i> @bZip @bCity
+                                    </p>
+                                    <p class="mb-0 small text-dark">@bAddress</p>
+
+                                    @if (string.IsNullOrWhiteSpace(selectedOrder.BillingAddress))
+                                    {
+                                        <div class="mt-2 x-small text-muted italic">
+                                            <i class="bi bi-info-circle me-1"></i> Legacy rendelés: alapértelmezett szállítási adatok.
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+
+                            @* 3. OSZLOP: Állapotok és Műveletek *@
+                            <div class="col-md-4">
+                                <h6 class="text-muted small fw-bold text-uppercase mb-3"><i class="bi bi-gear-wide-connected me-2"></i>Rendelés kezelése</h6>
+
+                                <div class="mb-3">
+                                    <label class="small fw-bold mb-1">Fizetési állapot:</label>
+                                    <select class="form-select form-select-sm border-0 bg-light rounded-3"
+                                            value="@selectedOrder.PaymentStatus"
+                                            @onchange="UpdatePayment"
+                                            disabled="@isProcessing">
+                                        @foreach (var val in Enum.GetValues<PaymentStatus>())
+                                        {
+                                            <option value="@val">@val</option>
+                                        }
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="small fw-bold mb-1">Logisztikai állapot:</label>
+                                    <select class="form-select form-select-sm border-0 bg-light rounded-3"
+                                            value="@selectedOrder.Status"
+                                            @onchange="UpdateLogistics"
+                                            disabled="@isProcessing">
+                                        @foreach (var val in Enum.GetValues<OrderStatus>())
+                                        {
+                                            <option value="@val">@GetStatusDisplayName(val)</option>
+                                        }
+                                    </select>
+                                </div>
+
+                                <button class="btn btn-outline-dark btn-sm w-100 rounded-pill py-2 mt-2"
+                                        @onclick="ResendConfirmationEmail"
+                                        disabled="@(isEmailSending || isProcessing)">
+                                    @if (isEmailSending)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2"></span>
+                                        <span>Küldés...</span>
+                                    }
+                                    else
+                                    {
+                                        <i class="bi bi-envelope-at me-2"></i>
+                                        <span>Visszaigazolás újraküldése</span>
+                                    }
+                                </button>
+                            </div>
+                        </div>
+
+                        @* TÉTELEK LISTÁJA *@
+                        <h6 class="text-muted small fw-bold text-uppercase mb-2 d-flex justify-content-between">
+                            <span>Rendelt tételek összekészítése</span>
+                            <span class="text-primary">@(selectedOrder.Items?.Count ?? 0) tétel</span>
+                        </h6>
+
+                        <div class="table-responsive border rounded-4 overflow-hidden mb-3" style="max-height: 280px;">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="sticky-top bg-white border-bottom">
+                                    <tr class="small text-muted">
+                                        <th style="width: 45px;" class="ps-3 py-2"></th>
+                                        <th class="py-2">Termék megnevezése</th>
+                                        <th class="text-end py-2">Mennyiség</th>
+                                        <th class="text-end pe-3 py-2">Részösszeg</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @if (selectedOrder.Items != null && selectedOrder.Items.Any())
+                                    {
+                                        @foreach (var item in selectedOrder.Items)
+                                        {
+                                            <tr class="@(item.IsPicked ? "table-success-subtle transition-all" : "")">
+                                                <td class="text-center ps-3">
+                                                    <input type="checkbox" class="form-check-input shadow-none"
+                                                           checked="@item.IsPicked"
+                                                           @onchange="(e) => ToggleItemPicked(item, e.Value)"
+                                                           disabled="@isProcessing" />
+                                                </td>
+                                                <td class="@(item.IsPicked ? "text-decoration-line-through text-muted" : "fw-bold text-dark")">
+                                                    @item.ProductName
+                                                </td>
+                                                <td class="text-end fw-semibold">@item.Quantity db</td>
+                                                <td class="text-end pe-3">@((item.Price * item.Quantity).ToString("N0")) Ft</td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        @* ÖSSZESÍTŐ BOX *@
+                        <div class="mt-3 p-3 bg-light rounded-4 border-0 shadow-sm">
+                            @{
+                                var itemsSubtotal = selectedOrder.Items?.Sum(i => i.Price * i.Quantity) ?? 0;
+                            }
+                            <div class="d-flex justify-content-between small mb-1 text-muted">
+                                <span>Tételek nettó értéke:</span>
+                                <span>@itemsSubtotal.ToString("N0") Ft</span>
+                            </div>
+
+                            @if (selectedOrder.DiscountAmount > 0)
+                            {
+                                <div class="d-flex justify-content-between small mb-1 text-success fw-bold">
+                                    <span>Kupon kedvezmény:</span>
+                                    <span>-@selectedOrder.DiscountAmount.ToString("N0") Ft</span>
+                                </div>
+                            }
+
+                            <div class="d-flex justify-content-between small text-muted">
+                                <span>Szállítási díj (@selectedOrder.ShippingMethod):</span>
+                                <span>@(selectedOrder.ShippingFee > 0 ? $"{selectedOrder.ShippingFee:N0} Ft" : "Ingyenes")</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* MODAL FOOTER *@
+                <div class="modal-footer bg-light border-0 py-3">
+                    <div class="me-auto">
+                        <span class="text-muted small d-block">Fizetendő végösszeg:</span>
+                        <div class="fw-bold h4 mb-0 text-primary">@selectedOrder.TotalAmount.ToString("N0") Ft</div>
+                    </div>
+                    <button class="btn btn-secondary rounded-pill px-5 fw-bold"
+                            @onclick="CloseModal"
+                            disabled="@isProcessing">
+                        Bezárás
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .table-success-subtle {
+        background-color: rgba(25, 135, 84, 0.08) !important;
+    }
+
+    .transition-all {
+        transition: all 0.2s ease-in-out;
+    }
+
+    .x-small {
+        font-size: 0.7rem;
+    }
+
+    .italic {
+        font-style: italic;
+    }
+</style>
+
+@code {
+    private List<Order>? allOrders;
+    private Order? selectedOrder;
+
+    // --- ÁLLAPOT VÁLTOZÓK ---
+    private bool isProcessing = false;
+    private bool isDetailsLoading = false;
+
+    // --- BULK ACTION VÁLTOZÓK ---
+    private HashSet<int> selectedOrderIds = new();
+    private string bulkPaymentStatus = "";
+    private string bulkLogisticsStatus = "";
+
+    private int bulkTotalCount = 0;
+    private int bulkProcessedCount = 0;
+    private string bulkCurrentAction = "";
+
+    // --- SZŰRŐ VÁLTOZÓK ---
+    private string searchTerm = "";
+    private string filterStatus = "";
+    private string filterPayment = "";
+    private string filterShippingMethod = "";
+    private string filterPaymentMethod = "";
+    private DateTime? filterDateFrom;
+    private DateTime? filterDateTo;
+
+    private bool isEmailSending = false;
+    private string sortColumn = "OrderDate";
+    private bool isAscending = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrders();
+    }
+
+    private async Task LoadOrders()
+    {
+        using var context = DbFactory.CreateDbContext();
+
+        allOrders = await context.Orders
+            .Include(o => o.Items)
+            .OrderByDescending(o => o.OrderDate)
+            .ToListAsync();
+    }
+
+    private IEnumerable<Order> FilteredAndSortedOrders
+    {
+        get
+        {
+            if (allOrders == null)
+            {
+                return Enumerable.Empty<Order>();
+            }
+
+            var query = allOrders.AsEnumerable();
+
+            // 1. Szöveges keresés (Vevő, Email, ID, Terméknév)
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                var term = searchTerm.Trim();
+                query = query.Where(o =>
+                    o.CustomerName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    o.Email.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    o.Id.ToString() == term.Replace("#", "") ||
+                    (o.Items != null && o.Items.Any(i => i.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                );
+            }
+
+            // 2. Státusz szűrők
+            if (!string.IsNullOrEmpty(filterStatus))
+            {
+                query = query.Where(o => o.Status.ToString() == filterStatus);
+            }
+
+            if (!string.IsNullOrEmpty(filterPayment))
+            {
+                query = query.Where(o => o.PaymentStatus.ToString() == filterPayment);
+            }
+
+            // 3. Mód szűrők
+            if (!string.IsNullOrEmpty(filterShippingMethod))
+            {
+                query = query.Where(o => o.ShippingMethod == filterShippingMethod);
+            }
+
+            if (!string.IsNullOrEmpty(filterPaymentMethod))
+            {
+                query = query.Where(o => o.PaymentMethod == filterPaymentMethod);
+            }
+
+            // 4. Dátum szűrők
+            if (filterDateFrom.HasValue)
+            {
+                query = query.Where(o => o.OrderDate.Date >= filterDateFrom.Value.Date);
+            }
+
+            if (filterDateTo.HasValue)
+            {
+                query = query.Where(o => o.OrderDate.Date <= filterDateTo.Value.Date);
+            }
+
+            // 5. Rendezés
+            return sortColumn switch
+            {
+                "Id" => isAscending ? query.OrderBy(o => o.Id) : query.OrderByDescending(o => o.Id),
+                "CustomerName" => isAscending ? query.OrderBy(o => o.CustomerName) : query.OrderByDescending(o => o.CustomerName),
+                "TotalAmount" => isAscending ? query.OrderBy(o => o.TotalAmount) : query.OrderByDescending(o => o.TotalAmount),
+                "Status" => isAscending ? query.OrderBy(o => o.Status) : query.OrderByDescending(o => o.Status),
+                _ => isAscending ? query.OrderBy(o => o.OrderDate) : query.OrderByDescending(o => o.OrderDate)
+            };
+        }
+    }
+
+    private void ToggleOrderSelection(int orderId, object? isChecked)
+    {
+        if (isChecked is bool checkedValue && checkedValue)
+        {
+            selectedOrderIds.Add(orderId);
+        }
+        else
+        {
+            selectedOrderIds.Remove(orderId);
+        }
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        if (e.Value is bool checkedValue && checkedValue)
+        {
+            selectedOrderIds = new HashSet<int>(FilteredAndSortedOrders.Select(o => o.Id));
+        }
+        else
+        {
+            selectedOrderIds.Clear();
+        }
+    }
+
+    private async Task SelectOrder(int orderId)
+    {
+        isDetailsLoading = true;
+
+        // Ideiglenes objektum az ID megtartásához a Modal keretének
+        selectedOrder = new Order { Id = orderId };
+        StateHasChanged();
+
+        try
+        {
+            using var context = DbFactory.CreateDbContext();
+
+            // Részletes adatok lekérése a tételekkel együtt
+            var detailedOrder = await context.Orders
+                .Include(o => o.Items)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(o => o.Id == orderId);
+
+            if (detailedOrder != null)
+            {
+                selectedOrder = detailedOrder;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba a rendelés részleteinek betöltésekor: {ex.Message}");
+        }
+        finally
+        {
+            isDetailsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseModal() => selectedOrder = null;
+
+    private async Task BanUser(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return;
+        }
+
+        bool confirmed = await JS.InvokeAsync<bool>("confirm", $"Biztosan tiltólistára helyezed a(z) {email} címet? A felhasználó nem tud többé vásárolni.");
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            using var context = DbFactory.CreateDbContext();
+
+            if (await context.BlacklistedUsers.AnyAsync(b => b.Email.ToLower() == email.ToLower()))
+            {
+                await JS.InvokeVoidAsync("alert", "Ez az e-mail cím már szerepel a tiltólistán.");
+                return;
+            }
+
+            context.BlacklistedUsers.Add(new BlacklistedUser
+            {
+                Email = email,
+                Reason = "Admin tiltás a Rendeléskezelőből",
+                AddedAt = DateTime.Now
+            });
+
+            await context.SaveChangesAsync();
+            await JS.InvokeVoidAsync("alert", "A felhasználó sikeresen tiltólistára került.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+            await JS.InvokeVoidAsync("alert", "Hiba történt a tiltás során.");
+        }
+    }
+
+    private async Task ToggleItemPicked(OrderItem item, object? checkedValue)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        bool isPicked = (bool)(checkedValue ?? false);
+
+        isProcessing = true;
+
+        using var context = DbFactory.CreateDbContext();
+        var dbItem = await context.OrderItems.FindAsync(item.Id);
+
+        if (dbItem != null)
+        {
+            dbItem.IsPicked = isPicked;
+            item.IsPicked = isPicked;
+
+            // AUTOMATIZMUS: Ha mindent bepipáltunk, állítsuk át Feldolgozva-ra
+            var orderId = dbItem.OrderId;
+            var areAllPicked = !await context.OrderItems
+                .AnyAsync(i => i.OrderId == orderId && !i.IsPicked && i.Id != dbItem.Id);
+
+            if (areAllPicked && isPicked)
+            {
+                var dbOrder = await context.Orders.FindAsync(orderId);
+
+                if (dbOrder != null && dbOrder.Status != OrderStatus.Feldolgozva && dbOrder.Status != OrderStatus.Teljesítve && dbOrder.Status != OrderStatus.Lemondva)
+                {
+                    dbOrder.Status = OrderStatus.Feldolgozva;
+
+                    if (selectedOrder != null && selectedOrder.Id == orderId)
+                    {
+                        selectedOrder.Status = OrderStatus.Feldolgozva;
+                    }
+
+                    // E-mail küldés automatikus státuszváltáskor
+                    try
+                    {
+                        await EmailService.SendStatusUpdateEmailAsync(dbOrder, "Rendelésedet összekészítettük!");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Automatikus e-mail hiba: {ex.Message}");
+                    }
+                }
+            }
+
+            await context.SaveChangesAsync();
+
+            // Háttérlista frissítése
+            var mainOrder = allOrders?.FirstOrDefault(o => o.Id == item.OrderId);
+
+            if (mainOrder != null)
+            {
+                var mainItem = mainOrder.Items?.FirstOrDefault(i => i.Id == item.Id);
+
+                if (mainItem != null)
+                {
+                    mainItem.IsPicked = isPicked;
+                }
+
+                if (selectedOrder != null && selectedOrder.Id == mainOrder.Id)
+                {
+                    mainOrder.Status = selectedOrder.Status;
+                }
+            }
+        }
+
+        isProcessing = false;
+        StateHasChanged();
+    }
+
+    private async Task UpdateLogistics(ChangeEventArgs e)
+    {
+        if (selectedOrder == null || isProcessing)
+        {
+            return;
+        }
+
+        if (Enum.TryParse<OrderStatus>(e.Value?.ToString(), out var newStatus))
+        {
+            isProcessing = true;
+            var currentOrderId = selectedOrder.Id;
+
+            try
+            {
+                using var context = DbFactory.CreateDbContext();
+                var dbOrder = await context.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == currentOrderId);
+
+                if (dbOrder != null)
+                {
+                    var oldStatus = dbOrder.Status;
+
+                    // Készletkezelés logika lemondás esetén
+                    if (newStatus == OrderStatus.Lemondva && oldStatus != OrderStatus.Lemondva)
+                    {
+                        foreach (var item in dbOrder.Items)
+                        {
+                            var product = await context.Products.FindAsync(item.ProductId);
+                            if (product != null)
+                            {
+                                product.Stock += item.Quantity;
+                            }
+                        }
+                    }
+                    else if (newStatus != OrderStatus.Lemondva && oldStatus == OrderStatus.Lemondva)
+                    {
+                        foreach (var item in dbOrder.Items)
+                        {
+                            var product = await context.Products.FindAsync(item.ProductId);
+                            if (product != null)
+                            {
+                                product.Stock = Math.Max(0, product.Stock - item.Quantity);
+                            }
+                        }
+                    }
+
+                    // Automatizmus: Ha Feldolgozva státuszba lépünk, pipáljunk be mindent
+                    if (newStatus == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                    {
+                        foreach (var item in dbOrder.Items)
+                        {
+                            item.IsPicked = true;
+                        }
+                    }
+
+                    dbOrder.Status = newStatus;
+                    await context.SaveChangesAsync();
+
+                    // --- ÚJ EMAIL LOGIKA ---
+                    // Ha Teljesítve státuszba kerül a rendelés, köszönő emailt és értékelő linket küldünk
+                    if (newStatus == OrderStatus.Teljesítve && oldStatus != OrderStatus.Teljesítve)
+                    {
+                        try
+                        {
+                            await EmailService.SendOrderCompletedReviewEmailAsync(dbOrder);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Review Email hiba: {ex.Message}");
+                        }
+                    }
+
+                    // E-mail küldés manuális váltásnál (Feldolgozva esetén)
+                    if (newStatus == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                    {
+                        try
+                        {
+                            await EmailService.SendStatusUpdateEmailAsync(dbOrder, "Rendelésedet összekészítettük!");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Email hiba: {ex.Message}");
+                        }
+                    }
+
+                    await LoadOrders();
+
+                    if (selectedOrder != null)
+                    {
+                        selectedOrder = allOrders?.FirstOrDefault(o => o.Id == currentOrderId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Hiba a logisztikai állapot frissítésekor: {ex.Message}");
+            }
+            finally
+            {
+                isProcessing = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task UpdatePayment(ChangeEventArgs e)
+    {
+        if (selectedOrder == null || !Enum.TryParse<PaymentStatus>(e.Value?.ToString(), out var newStatus))
+        {
+            return;
+        }
+
+        isProcessing = true;
+
+        using var context = DbFactory.CreateDbContext();
+        var dbOrder = await context.Orders.FindAsync(selectedOrder.Id);
+
+        if (dbOrder != null)
+        {
+            dbOrder.PaymentStatus = newStatus;
+            await context.SaveChangesAsync();
+
+            await LoadOrders();
+
+            if (selectedOrder != null)
+            {
+                var refreshed = allOrders?.FirstOrDefault(o => o.Id == selectedOrder.Id);
+                if (refreshed != null)
+                {
+                    selectedOrder.PaymentStatus = refreshed.PaymentStatus;
+                }
+            }
+        }
+
+        isProcessing = false;
+        StateHasChanged();
+    }
+
+    private async Task ApplyBulkUpdate()
+    {
+        if (!selectedOrderIds.Any())
+        {
+            return;
+        }
+
+        bool hasLogisticsChange = Enum.TryParse<OrderStatus>(bulkLogisticsStatus, out var newLogistics);
+        bool hasPaymentChange = Enum.TryParse<PaymentStatus>(bulkPaymentStatus, out var newPayment);
+
+        if (!hasLogisticsChange && !hasPaymentChange)
+        {
+            return;
+        }
+
+        isProcessing = true;
+        bulkTotalCount = selectedOrderIds.Count;
+        bulkProcessedCount = 0;
+        bulkCurrentAction = "Adatok előkészítése...";
+        StateHasChanged();
+
+        using var context = DbFactory.CreateDbContext();
+
+        var ordersToUpdate = await context.Orders
+            .Include(o => o.Items)
+            .Where(o => selectedOrderIds.Contains(o.Id))
+            .ToListAsync();
+
+        foreach (var order in ordersToUpdate)
+        {
+            bulkProcessedCount++;
+            bulkCurrentAction = $"Rendelés feldolgozása: #{order.Id}";
+            StateHasChanged();
+
+            if (hasPaymentChange)
+            {
+                order.PaymentStatus = newPayment;
+            }
+
+            if (hasLogisticsChange)
+            {
+                var oldStatus = order.Status;
+
+                if (newLogistics == OrderStatus.Lemondva && oldStatus != OrderStatus.Lemondva)
+                {
+                    foreach (var item in order.Items)
+                    {
+                        var p = await context.Products.FindAsync(item.ProductId);
+                        if (p != null)
+                        {
+                            p.Stock += item.Quantity;
+                        }
+                    }
+                }
+                else if (newLogistics != OrderStatus.Lemondva && oldStatus == OrderStatus.Lemondva)
+                {
+                    foreach (var item in order.Items)
+                    {
+                        var p = await context.Products.FindAsync(item.ProductId);
+                        if (p != null)
+                        {
+                            p.Stock = Math.Max(0, p.Stock - item.Quantity);
+                        }
+                    }
+                }
+
+                if (newLogistics == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                {
+                    foreach (var item in order.Items)
+                    {
+                        item.IsPicked = true;
+                    }
+                }
+
+                order.Status = newLogistics;
+
+                // --- ÚJ EMAIL LOGIKA BULK ESETÉN ---
+                if (newLogistics == OrderStatus.Teljesítve && oldStatus != OrderStatus.Teljesítve)
+                {
+                    try
+                    {
+                        await EmailService.SendOrderCompletedReviewEmailAsync(order);
+                    }
+                    catch { }
+                }
+
+                if (newLogistics == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                {
+                    bulkCurrentAction = $"Email küldése: #{order.Id} ({order.Email})";
+                    StateHasChanged();
+
+                    try
+                    {
+                        await EmailService.SendStatusUpdateEmailAsync(order, "Rendelésedet összekészítettük!");
+                        await Task.Delay(100);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Bulk Email hiba: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        await context.SaveChangesAsync();
+
+        bulkCurrentAction = "Kész! Lista frissítése...";
+        StateHasChanged();
+        await Task.Delay(500);
+
+        selectedOrderIds.Clear();
+        bulkPaymentStatus = "";
+        bulkLogisticsStatus = "";
+        await LoadOrders();
+
+        isProcessing = false;
+        StateHasChanged();
+    }
+
+    private void SortTable(string col)
+    {
+        if (sortColumn == col)
+        {
+            isAscending = !isAscending;
+        }
+        else
+        {
+            sortColumn = col;
+            isAscending = true;
+        }
+    }
+
+    private string GetSortIcon(string col) => sortColumn == col ? (isAscending ? "↑" : "↓") : "↕";
+
+    private string GetPaymentClass(PaymentStatus status) => status switch
+    {
+        PaymentStatus.Fizetve => "bg-success text-white",
+        PaymentStatus.Fizetendő => "bg-warning text-dark fw-bold",
+        PaymentStatus.Sztornózva => "bg-danger text-white",
+        _ => "bg-secondary text-white"
+    };
+
+    private string GetStatusClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Feldolgozatlan => "bg-secondary text-white",
+        OrderStatus.FeldolgozásAlatt => "bg-warning text-dark",
+        OrderStatus.Feldolgozva => "bg-success-subtle text-success border border-success",
+        OrderStatus.SzállításAlatt => "bg-info text-dark",
+        OrderStatus.Teljesítve => "bg-primary text-white",
+        OrderStatus.Lemondva => "bg-danger text-white",
+        _ => "bg-light text-dark border"
+    };
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        filterStatus = "";
+        filterPayment = "";
+        filterShippingMethod = "";
+        filterPaymentMethod = "";
+        filterDateFrom = null;
+        filterDateTo = null;
+    }
+
+    private async Task ResendConfirmationEmail()
+    {
+        if (selectedOrder == null)
+        {
+            return;
+        }
+
+        isEmailSending = true;
+
+        try
+        {
+            var pdfPath = Path.Combine(Environment.WebRootPath, "invoices", $"order_{selectedOrder.Id}.pdf");
+            await EmailService.SendOrderConfirmationEmailAsync(selectedOrder, pdfPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            isEmailSending = false;
+        }
+    }
+
+    public static string GetStatusDisplayName(OrderStatus status) => status switch
+    {
+        OrderStatus.FeldolgozásAlatt => "Feldolgozás alatt",
+        OrderStatus.SzállításAlatt => "Szállítás alatt",
+        _ => status.ToString()
+    };
+}

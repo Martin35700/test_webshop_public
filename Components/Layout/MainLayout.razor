@@ -1,0 +1,22 @@
+﻿@inherits LayoutComponentBase
+@using webshop.Components
+
+<div class="page">
+    @* A kosár perzisztenciát ide költöztetjük, így a Layout maradhat statikus *@
+    <CartPersistence />
+
+    <NavMenu />
+
+    <main>
+        <div class="container mt-3">
+            @Body
+        </div>
+    </main>
+
+    <Footer />
+</div>
+
+@code {
+    // Itt most nincs szükség kódra, mert a CartPersistence végzi a munkát.
+    // Ez biztosítja, hogy a Login/Logout ne törjön el.
+}

@@ -1,0 +1,87 @@
+﻿@page "/Account/Login"
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.ComponentModel.DataAnnotations
+@using webshop.Models
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager NavigationManager
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-5 card shadow-sm border-0 rounded-4 p-4">
+            <h3 class="fw-bold mb-4">Bejelentkezés</h3>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger rounded-3 small">@errorMessage</div>
+            }
+
+            <EditForm Model="Input" OnValidSubmit="LoginUser" FormName="loginForm" Method="post">
+                <DataAnnotationsValidator />
+
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">E-mail cím</label>
+                    <InputText @bind-Value="Input.Email" class="form-control rounded-3" autocomplete="username" />
+                    <ValidationMessage For="() => Input.Email" class="text-danger small" />
+                </div>
+
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Jelszó</label>
+                    <InputText @bind-Value="Input.Password" type="password" class="form-control rounded-3" autocomplete="current-password" />
+                    <ValidationMessage For="() => Input.Password" class="text-danger small" />
+                </div>
+
+                <div class="mb-4 text-end">
+                    <a href="Account/ForgotPassword" class="small text-decoration-none">Elfelejtette a jelszavát?</a>
+                </div>
+
+                <button type="submit" class="btn btn-dark w-100 rounded-pill py-2 fw-bold">Belépés</button>
+
+                <div class="mt-4 text-center">
+                    <p class="text-muted small">
+                        Még nincs fiókja?
+                        <a href="Account/Register" class="fw-bold text-decoration-none text-primary">Regisztráljon itt</a>
+                    </p>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromForm]
+    public LoginInput Input { get; set; } = new();
+
+    private string? errorMessage;
+
+    protected override void OnInitialized()
+    {
+        Input ??= new();
+    }
+
+    public async Task LoginUser()
+    {
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, isPersistent: true, lockoutOnFailure: false);
+
+        if (result.Succeeded)
+        {
+            NavigationManager.NavigateTo("/", forceLoad: true);
+        }
+        else
+        {
+            errorMessage = "Hiba: Érvénytelen e-mail cím vagy jelszó!";
+        }
+    }
+
+    public class LoginInput
+    {
+        [Required(ErrorMessage = "Az e-mail cím megadása kötelező.")]
+        [EmailAddress(ErrorMessage = "Érvénytelen e-mail formátum.")]
+        public string Email { get; set; } = "";
+
+        [Required(ErrorMessage = "A jelszó megadása kötelező.")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+    }
+}

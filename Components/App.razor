@@ -1,0 +1,149 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["webshop.styles.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet/>
+
+    <script>
+        window.downloadFileFromStream = async (fileName, contentStreamReference) => {
+            const arrayBuffer = await contentStreamReference.arrayBuffer();
+            const blob = new Blob([arrayBuffer]);
+            const url = URL.createObjectURL(blob);
+            const anchorElement = document.createElement('a');
+            anchorElement.href = url;
+            anchorElement.download = fileName ?? '';
+            anchorElement.click();
+            anchorElement.remove();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+    <script>
+        window.startCarousel = (id) => {
+            var myCarousel = document.getElementById(id);
+            if (myCarousel) {
+                // Megsemmisítjük az esetleges régi példányt és újat hozunk létre
+                var carousel = new bootstrap.Carousel(myCarousel, {
+                    interval: 5000,
+                    ride: 'carousel',
+                    pause: 'hover'
+                });
+                carousel.cycle();
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+                window.setupSalesChart = (canvasId, labels, data) => {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (window.sChart) window.sChart.destroy();
+            window.sChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Bevétel',
+                        data: data,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        };
+
+        window.setupCategoryChart = (canvasId, labels, data) => {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (window.cChart) window.cChart.destroy();
+            window.cChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#0d6efd', '#198754', '#ffc107', '#0dcaf0', '#6610f2']
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            });
+        };
+    </script>
+    <script>
+            window.downloadFile = (fileName, contentType, base64) => {
+            const link = document.createElement('a');
+            link.download = fileName;
+            link.href = `data:${contentType};base64,${base64}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+    </script>
+    <script>
+                   window.renderAdvancedCharts = (labels, revenue, expense, paymentData, shipLabels, shipData) => {
+            // 1. CASH-FLOW TREND
+            const ctx1 = document.getElementById('accountingChart').getContext('2d');
+            if (window.acChart1) window.acChart1.destroy();
+            window.acChart1 = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Bevétel', data: revenue, borderColor: '#0d6efd', backgroundColor: 'rgba(13, 110, 253, 0.1)', fill: true, tension: 0.3 },
+                        { label: 'Kiadás', data: expense, borderColor: '#dc3545', backgroundColor: 'rgba(220, 53, 69, 0.1)', fill: true, tension: 0.3 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+
+            // 2. FIZETÉSI MÓDOK
+            const ctx2 = document.getElementById('paymentMethodChart').getContext('2d');
+            if (window.acChart2) window.acChart2.destroy();
+            window.acChart2 = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Bankkártya', 'Átutalás', 'Utánvét'],
+                    datasets: [{ data: paymentData, backgroundColor: ['#0d6efd', '#0dcaf0', '#198754'] }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            });
+
+            // 3. SZÁLLÍTÁSI MÓDOK
+            const ctx3 = document.getElementById('shippingMethodChart').getContext('2d');
+            if (window.acChart3) window.acChart3.destroy();
+            window.acChart3 = new Chart(ctx3, {
+                type: 'bar',
+                data: {
+                    labels: shipLabels,
+                    datasets: [{ label: 'Rendelések száma', data: shipData, backgroundColor: '#6610f2' }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y' }
+            });
+        };
+    </script>
+</head>
+
+<body>
+    <Routes/>
+
+    <ReconnectModal />
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script src="_framework/blazor.web.js"></script>
+    <script>
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    </script>
+</body>
+
+</html>

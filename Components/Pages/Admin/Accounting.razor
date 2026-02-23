@@ -1,0 +1,500 @@
+﻿@page "/admin/accounting"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using System.Text
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>Üzleti Intelligencia és Könyvelés | Admin</PageTitle>
+
+@* Chart.js betöltése *@
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold m-0 text-dark">Üzleti Analitika</h2>
+        <button class="btn btn-outline-dark rounded-pill px-4 shadow-sm" @onclick='() => Nav.NavigateTo("/admin")'>
+            <i class="bi bi-house-door me-2"></i>Dashboard
+        </button>
+    </div>
+
+    @* SZŰRŐ PANELS *@
+    <div class="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-light animate__animated animate__fadeIn">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small fw-bold text-muted text-uppercase">Időszak kezdete</label>
+                <input type="date" class="form-control border-0 shadow-sm rounded-3" @bind="startDate" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-bold text-muted text-uppercase">Időszak vége</label>
+                <input type="date" class="form-control border-0 shadow-sm rounded-3" @bind="endDate" />
+            </div>
+            <div class="col-md-4">
+                <button class="btn btn-primary w-100 rounded-pill fw-bold shadow py-2" @onclick="GenerateReport">
+                    <i class="bi bi-arrow-repeat me-2"></i>Riport Generálása
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (report != null)
+    {
+        @* 1. SZINT: STRATÉGIAI KPI-OK *@
+        <div class="row g-4 mb-4 animate__animated animate__fadeInUp">
+            <div class="col-md-3">
+                <div class="p-4 bg-white rounded-4 shadow-sm border-start border-primary border-5 h-100 transition-hover">
+                    <div class="small text-muted text-uppercase fw-bold mb-1">Összes Bevétel</div>
+                    <div class="h3 fw-bold m-0">@report.TotalGrossRevenue.ToString("N0") Ft</div>
+                    <small class="text-primary fw-bold">@report.OrderCount db rendelés</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="p-4 bg-white rounded-4 shadow-sm border-start border-success border-5 h-100 transition-hover">
+                    <div class="small text-muted text-uppercase fw-bold mb-1">Tiszta Áruérték</div>
+                    <div class="h3 fw-bold m-0">@report.TotalProductValue.ToString("N0") Ft</div>
+                    <small class="text-success fw-bold">Kedvezmények nélkül</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="p-4 bg-white rounded-4 shadow-sm border-start border-danger border-5 h-100 transition-hover">
+                    <div class="small text-muted text-uppercase fw-bold mb-1">Kiadott Kedvezmény</div>
+                    <div class="h3 fw-bold text-danger m-0">-@report.TotalDiscounts.ToString("N0") Ft</div>
+                    <small class="text-muted small">@report.DiscountRate.ToString("N1")% engedmény</small>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="p-4 bg-white rounded-4 shadow-sm border-start border-warning border-5 h-100 transition-hover">
+                    <div class="small text-muted text-uppercase fw-bold mb-1">Átlagos Kosárérték</div>
+                    <div class="h3 fw-bold m-0">@report.AverageOrderValue.ToString("N0") Ft</div>
+                    <small class="text-muted small">Vevőnkénti költés</small>
+                </div>
+            </div>
+        </div>
+
+        @* 2. SZINT: PÉNZÜGYI EGYENLEG *@
+        <div class="row g-4 mb-4 animate__animated animate__fadeInUp" style="animation-delay: 0.1s;">
+            <div class="col-md-6">
+                <div class="p-4 bg-dark text-white rounded-4 shadow-sm border-start border-info border-5 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="small text-uppercase fw-bold opacity-75">Összes Kiadás (Stock Up + Szállítás)</div>
+                        <i class="bi bi-wallet2 fs-4 opacity-50"></i>
+                    </div>
+                    <div class="h2 fw-bold m-0 text-info">@((report.TotalPurchaseCost + report.TotalShippingFees).ToString("N0")) Ft</div>
+                    <div class="mt-2 small opacity-75">
+                        Beszerzés: @report.TotalPurchaseCost.ToString("N0") Ft |
+                        Szállítási önköltség: @report.TotalShippingFees.ToString("N0") Ft
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="p-4 bg-white rounded-4 shadow-sm border-start border-primary border-5 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="small text-muted text-uppercase fw-bold">Nettó Üzleti Egyenleg</div>
+                        <span class="badge bg-primary rounded-pill px-3">ROI: @report.ROI.ToString("N1")%</span>
+                    </div>
+                    <div class="h2 fw-bold m-0 text-primary">@report.GrossProfit.ToString("N0") Ft</div>
+                    <div class="mt-2 small text-muted">
+                        Kalkuláció: (Nettó Bevétel) - (Minden Beszerzési Költség)
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* 3. SZINT: VIZUÁLIS ANALITIKA *@
+        <div class="row g-4 mb-4 animate__animated animate__fadeInUp" style="animation-delay: 0.2s;">
+            <div class="col-lg-8">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h6 class="fw-bold mb-4 text-uppercase small text-muted tracking-wider">
+                        <i class="bi bi-graph-up me-2 text-primary"></i>Cash-Flow Dinamika (Napi)
+                    </h6>
+                    <div style="height: 350px;">
+                        <canvas id="accountingChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h6 class="fw-bold mb-4 text-uppercase small text-muted tracking-wider">
+                        <i class="bi bi-pie-chart me-2 text-primary"></i>Bevétel Forrása
+                    </h6>
+                    <div style="height: 350px;">
+                        <canvas id="paymentMethodChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* 4. SZINT: TERMÉK-PROFITABILITÁS *@
+        <div class="card border-0 shadow-sm rounded-4 mb-4 overflow-hidden animate__animated animate__fadeInUp" style="animation-delay: 0.3s;">
+            <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold m-0 text-uppercase small text-muted"><i class="bi bi-gem text-warning me-2"></i>Termék Életciklus és Nyereség</h6>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light small text-muted text-uppercase">
+                        <tr>
+                            <th class="ps-4">Termék</th>
+                            <th class="text-center">Eladás</th>
+                            <th class="text-end">Bruttó Bevétel</th>
+                            <th class="text-end text-primary">Önköltség (Átl.)</th>
+                            <th class="text-end pe-4">Árrés Tömeg</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in report.TopProducts)
+                        {
+                            <tr>
+                                <td class="ps-4 fw-bold">@p.Name</td>
+                                <td class="text-center">
+                                    <span class="badge bg-light text-dark border">@p.Quantity db</span>
+                                </td>
+                                <td class="text-end">@p.Revenue.ToString("N0") Ft</td>
+                                <td class="text-end text-primary small">@p.AvgPurchaseCost.ToString("N0") Ft/db</td>
+                                <td class="text-end pe-4">
+                                    <span class="fw-bold @(p.RealizedProfit >= 0 ? "text-success" : "text-danger")">
+                                        @p.RealizedProfit.ToString("N0") Ft
+                                    </span>
+                                    <div class="progress mt-1 ms-auto" style="height: 4px; width: 60px;">
+                                        <div class="progress-bar bg-success" style="width: @(p.Revenue > 0 ? (p.RealizedProfit / (p.Revenue / 1.27m) * 100) : 0)%"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        @* 5. SZINT: LOGISZTIKA ÉS ÜGYFÉL STATISZTIKÁK *@
+        <div class="row g-4 mb-4 animate__animated animate__fadeInUp" style="animation-delay: 0.4s;">
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h6 class="fw-bold mb-4 text-uppercase small text-muted">Szállítási Mix</h6>
+                    <div style="height: 220px;">
+                        <canvas id="shippingMethodChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h6 class="fw-bold mb-4 text-uppercase small text-muted">Vásárlói Bázis</h6>
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-primary-soft p-2 rounded-3 me-3"><i class="bi bi-person-check text-primary"></i></div>
+                            <span>Regisztrált</span>
+                        </div>
+                        <span class="fw-bold h5 m-0">@report.RegisteredCustomerOrders</span>
+                    </div>
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-secondary-soft p-2 rounded-3 me-3"><i class="bi bi-person-dash text-muted"></i></div>
+                            <span>Vendég</span>
+                        </div>
+                        <span class="fw-bold h5 m-0 text-muted">@report.GuestOrders</span>
+                    </div>
+                    <div class="mt-auto border-top pt-3">
+                        <div class="d-flex justify-content-between small">
+                            <span class="text-muted">Konverziós hűség:</span>
+                            <span class="fw-bold text-primary">@((report.OrderCount > 0 ? (double)report.RegisteredCustomerOrders / report.OrderCount * 100 : 0).ToString("N1"))%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100 bg-gradient-dark text-white">
+                    <h6 class="fw-bold mb-4 text-uppercase small opacity-75">Rendszer Állapot</h6>
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-end mb-1">
+                            <small class="opacity-75">Lemondási ráta:</small>
+                            <span class="fw-bold text-warning">@report.CancellationRate.ToString("N1")%</span>
+                        </div>
+                        <div class="progress bg-white-20" style="height: 6px;">
+                            <div class="progress-bar bg-warning" style="width: @report.CancellationRate%"></div>
+                        </div>
+                    </div>
+                    <div class="mb-0">
+                        <div class="d-flex justify-content-between align-items-end mb-1">
+                            <small class="opacity-75">ÁFA Kötelezettség:</small>
+                        </div>
+                        <div class="h4 fw-bold">@report.TotalVAT.ToString("N0") Ft</div>
+                        <small class="text-info"><i class="bi bi-info-circle me-1"></i>27% kulccsal számolva</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* 6. SZINT: RÉSZLETES LISTÁK ÉS EXPORT *@
+        <div class="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-white animate__animated animate__fadeIn">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h5 class="fw-bold m-0 text-dark">Adatok Exportálása</h5>
+                <button class="btn btn-dark btn-lg rounded-pill px-5 fw-bold shadow-lg transition-hover" @onclick="ExportToCsv">
+                    <i class="bi bi-file-earmark-excel me-2"></i>TELJES CSV GENERÁLÁSA
+                </button>
+            </div>
+            <div class="row g-4">
+                <div class="col-md-6">
+                    <div class="p-3 border rounded-3 bg-light-soft">
+                        <h6 class="fw-bold small mb-2 text-primary">A CSV tartalma:</h6>
+                        <ul class="small text-muted mb-0">
+                            <li>Összesített pénzügyi mérleg (Bevétel, ÁFA, ROI)</li>
+                            <li>Részletes rendelési lista (Minden tranzakció)</li>
+                            <li>Készletbeszerzési napló (Stock Up események)</li>
+                            <li>Termékenkénti árrés kimutatás</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="p-3 border rounded-3 bg-light-soft h-100">
+                        <h6 class="fw-bold small mb-2 text-success">Instrukció:</h6>
+                        <p class="small text-muted mb-0">Az exportált fájlt az Excelben "Semicolon" (pontosvessző) elválasztóval és UTF-8 kódolással nyissa meg a tökéletes formázáshoz.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .transition-hover {
+        transition: all 0.3s ease;
+    }
+
+        .transition-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+        }
+
+    .bg-primary-soft {
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+
+    .bg-secondary-soft {
+        background-color: rgba(108, 117, 125, 0.1);
+    }
+
+    .bg-light-soft {
+        background-color: #fafbfc;
+    }
+
+    .bg-white-20 {
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .bg-gradient-dark {
+        background: linear-gradient(135deg, #212529 0%, #343a40 100%);
+    }
+
+    .tracking-wider {
+        letter-spacing: 0.05em;
+    }
+</style>
+
+@code {
+    private DateTime startDate = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+    private DateTime endDate = DateTime.Now;
+    private AccountingReport? report;
+
+    private async Task GenerateReport()
+    {
+        using var context = DbFactory.CreateDbContext();
+
+        // 1. ADATGYŰJTÉS
+        var orders = await context.Orders
+            .Include(o => o.Items)
+            .Where(o => o.OrderDate >= startDate && o.OrderDate <= endDate.AddDays(1) && o.Status != OrderStatus.Lemondva)
+            .ToListAsync();
+
+        var stockEntries = await context.StockEntries
+            .Include(se => se.Product)
+            .Where(se => se.Date >= startDate && se.Date <= endDate.AddDays(1))
+            .ToListAsync();
+
+        var cancelledCount = await context.Orders
+            .CountAsync(o => o.OrderDate >= startDate && o.OrderDate <= endDate.AddDays(1) && o.Status == OrderStatus.Lemondva);
+
+        // 2. ÖNKÖLTSÉG SZÁMÍTÁSOK
+        var avgProductCosts = await context.StockEntries
+            .GroupBy(se => se.ProductId)
+            .Select(g => new { ProductId = g.Key, AvgCost = g.Average(x => x.UnitCost) })
+            .ToDictionaryAsync(x => x.ProductId, x => x.AvgCost);
+
+        decimal totalGross = orders.Sum(o => o.TotalAmount);
+        decimal totalNet = totalGross / 1.27m;
+        decimal totalVat = totalGross - totalNet;
+        decimal totalPurchaseCost = stockEntries.Sum(se => se.Quantity * se.UnitCost);
+
+        // Diagram adatok (Napi bontás)
+        var dailyLabels = new List<string>();
+        var revenueData = new List<decimal>();
+        var expenseData = new List<decimal>();
+
+        for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+        {
+            dailyLabels.Add(date.ToString("MM.dd"));
+            revenueData.Add(orders.Where(o => o.OrderDate.Date == date).Sum(o => o.TotalAmount));
+            expenseData.Add(stockEntries.Where(se => se.Date.Date == date).Sum(se => se.Quantity * se.UnitCost));
+        }
+
+        var shippingMethods = orders.GroupBy(o => o.ShippingMethod ?? "Futárszolgálat")
+                                   .Select(g => new { Method = g.Key, Count = g.Count() })
+                                   .ToList();
+
+        report = new AccountingReport
+        {
+            OrderCount = orders.Count,
+            TotalGrossRevenue = totalGross,
+            TotalShippingFees = orders.Sum(o => o.ShippingFee),
+            TotalDiscounts = orders.Sum(o => o.DiscountAmount),
+            TotalProductValue = orders.Sum(o => o.Items.Sum(i => i.Price * i.Quantity)),
+            TotalItemsSold = orders.SelectMany(o => o.Items).Sum(i => i.Quantity),
+
+            TotalPurchaseCost = totalPurchaseCost,
+            GrossProfit = totalNet - totalPurchaseCost,
+            ROI = totalPurchaseCost > 0 ? (double)((totalNet - totalPurchaseCost) / totalPurchaseCost * 100) : 0,
+            DiscountRate = totalGross > 0 ? (double)(orders.Sum(o => o.DiscountAmount) / totalGross * 100) : 0,
+
+            TotalNetRevenue = totalNet,
+            TotalVAT = totalVat,
+            AverageOrderValue = orders.Count > 0 ? orders.Average(o => o.TotalAmount) : 0,
+
+            RevenueByCard = orders.Where(o => o.PaymentMethod == "Bankkártya").Sum(o => o.TotalAmount),
+            RevenueByTransfer = orders.Where(o => o.PaymentMethod == "Utalás").Sum(o => o.TotalAmount),
+            RevenueByCash = orders.Where(o => o.PaymentMethod == "Utánvét").Sum(o => o.TotalAmount),
+
+            RegisteredCustomerOrders = orders.Count(o => !string.IsNullOrEmpty(o.UserId)),
+            GuestOrders = orders.Count(o => string.IsNullOrEmpty(o.UserId)),
+            CancellationRate = (orders.Count + cancelledCount) > 0 ? (double)cancelledCount / (orders.Count + cancelledCount) * 100 : 0,
+
+            PeriodStockEntries = stockEntries.OrderByDescending(se => se.Date).ToList(),
+
+            TopProducts = orders.SelectMany(o => o.Items)
+                .GroupBy(i => new { i.ProductId, i.ProductName })
+                .Select(g =>
+                {
+                    decimal rev = g.Sum(i => i.Price * i.Quantity);
+                    decimal cost = g.Key.ProductId.HasValue && avgProductCosts.TryGetValue(g.Key.ProductId.Value, out var c) ? c : 0;
+                    return new ProductStat
+                    {
+                        Name = g.Key.ProductName,
+                        Quantity = g.Sum(i => i.Quantity),
+                        Revenue = rev,
+                        AvgPurchaseCost = cost,
+                        RealizedProfit = (rev / 1.27m) - (cost * g.Sum(i => i.Quantity))
+                    };
+                }).OrderByDescending(p => p.RealizedProfit).ToList(),
+
+            DailyStats = dailyLabels.Select((label, index) => new DailyStat
+            {
+                DateLabel = label,
+                Revenue = revenueData[index],
+                Count = orders.Count(o => o.OrderDate.ToString("MM.dd") == label)
+            }).ToList()
+        };
+
+        // JS DIAGRAMOK HÍVÁSA
+        await Task.Delay(200);
+        await JS.InvokeVoidAsync("renderAdvancedCharts",
+            dailyLabels, revenueData, expenseData,
+            new decimal[] { report.RevenueByCard, report.RevenueByTransfer, report.RevenueByCash },
+            shippingMethods.Select(x => x.Method).ToArray(),
+            shippingMethods.Select(x => x.Count).ToArray());
+    }
+
+    private async Task ExportToCsv()
+    {
+        if (report == null) await GenerateReport();
+        using var context = DbFactory.CreateDbContext();
+
+        var ordersForExport = await context.Orders
+            .Include(o => o.Items)
+            .Where(o => o.OrderDate >= startDate && o.OrderDate <= endDate.AddDays(1) && o.Status != OrderStatus.Lemondva)
+            .OrderBy(o => o.OrderDate)
+            .ToListAsync();
+
+        var csv = new StringBuilder();
+
+        // 1. BLOKK: PÉNZÜGYI ÖSSZESÍTŐ
+        csv.AppendLine("RIZIKA ANALITIKA ÉS MÉRLEG");
+        csv.AppendLine($"Idoszak:;{startDate:yyyy.MM.dd} - {endDate:yyyy.MM.dd}");
+        csv.AppendLine($"Brutto Bevetel:;{report!.TotalGrossRevenue} Ft");
+        csv.AppendLine($"Netto Bevetel:;{report.TotalNetRevenue} Ft");
+        csv.AppendLine($"AFA (27%):;{report.TotalVAT} Ft");
+        csv.AppendLine($"Osszes Beszerzes:;{report.TotalPurchaseCost} Ft");
+        csv.AppendLine($"Cash-Flow Egyenleg:;{report.GrossProfit} Ft");
+        csv.AppendLine($"ROI:;{report.ROI:N2}%");
+        csv.AppendLine(";;");
+
+        // 2. BLOKK: RENDELÉSEK RÉSZLETESEN
+        csv.AppendLine("RENDELESEK LISTAJA");
+        csv.AppendLine("ID;Datum;Vevo;Email;Varos;Fizetes;Szallitas;Aruertek;Kedvezmeny;Vegosszeg");
+        foreach (var o in ordersForExport)
+        {
+            decimal sub = o.TotalAmount + o.DiscountAmount - o.ShippingFee;
+            csv.AppendLine($"{o.Id};{o.OrderDate:yyyy.MM.dd};\"{o.CustomerName}\";{o.Email};{o.City};{o.PaymentMethod};{o.ShippingMethod};{sub};{o.DiscountAmount};{o.TotalAmount}");
+        }
+        csv.AppendLine(";;");
+
+        // 3. BLOKK: BESZERZÉSEK (STOCK UP)
+        csv.AppendLine("BESZERZESI NAPLO (STOCK UP)");
+        csv.AppendLine("Datum;Termek;Mennyiseg;Egysegar;Osszesen");
+        foreach (var se in report.PeriodStockEntries)
+        {
+            csv.AppendLine($"{se.Date:yyyy.MM.dd HH:mm};\"{se.Product?.Name}\";{se.Quantity};{se.UnitCost};{se.Quantity * se.UnitCost}");
+        }
+
+        var preamble = Encoding.UTF8.GetPreamble();
+        var contentBytes = Encoding.UTF8.GetBytes(csv.ToString());
+        var finalBytes = new byte[preamble.Length + contentBytes.Length];
+        Buffer.BlockCopy(preamble, 0, finalBytes, 0, preamble.Length);
+        Buffer.BlockCopy(contentBytes, 0, finalBytes, preamble.Length, contentBytes.Length);
+
+        await JS.InvokeVoidAsync("downloadFile", $"webshop_uzleti_riport_{startDate:yyyyMMdd}.csv", "text/csv;charset=utf-8", Convert.ToBase64String(finalBytes));
+    }
+
+    public class AccountingReport
+    {
+        public decimal TotalGrossRevenue { get; set; }
+        public decimal TotalProductValue { get; set; }
+        public decimal TotalDiscounts { get; set; }
+        public decimal TotalShippingFees { get; set; }
+        public int OrderCount { get; set; }
+        public int TotalItemsSold { get; set; }
+        public decimal AverageOrderValue { get; set; }
+        public decimal TotalVAT { get; set; }
+        public decimal TotalNetRevenue { get; set; }
+        public decimal TotalPurchaseCost { get; set; }
+        public decimal GrossProfit { get; set; }
+        public double ROI { get; set; }
+        public double DiscountRate { get; set; }
+        public int RegisteredCustomerOrders { get; set; }
+        public int GuestOrders { get; set; }
+        public double CancellationRate { get; set; }
+        public decimal RevenueByCard { get; set; }
+        public decimal RevenueByTransfer { get; set; }
+        public decimal RevenueByCash { get; set; }
+        public List<ProductStat> TopProducts { get; set; } = new();
+        public List<DailyStat> DailyStats { get; set; } = new();
+        public List<StockEntry> PeriodStockEntries { get; set; } = new();
+    }
+
+    public class ProductStat
+    {
+        public string Name { get; set; } = "";
+        public int Quantity { get; set; }
+        public decimal Revenue { get; set; }
+        public decimal AvgPurchaseCost { get; set; }
+        public decimal RealizedProfit { get; set; }
+    }
+
+    public class DailyStat
+    {
+        public string DateLabel { get; set; } = "";
+        public int Count { get; set; }
+        public decimal Revenue { get; set; }
+    }
+}

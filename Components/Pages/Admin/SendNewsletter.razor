@@ -1,0 +1,300 @@
+﻿@page "/admin/newsletter"
+@using webshop.Services
+@using webshop.Models
+@using webshop.Data
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject NewsletterService NewsletterService
+@inject EmailQueue EmailQueue
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject EmailService EmailService
+@inject IServiceProvider ServiceProvider
+@inject IConfiguration Config
+
+<PageTitle>Hírlevél küldése - Admin</PageTitle>
+
+<div class="container py-5">
+    <h2 class="fw-bold mb-4">Hírlevél és Kupon küldése</h2>
+
+    <div class="row g-4">
+        @* --- BAL OSZLOP: LEVÉLKÜLDŐ --- *@
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                @if (sendingComplete)
+                {
+                    <div class="text-center py-5 d-flex flex-column justify-content-center h-100">
+                        <div class="display-1 text-success mb-3 animate__animated animate__bounceIn"><i class="bi bi-send-check"></i></div>
+                        <h3>Hírlevél sikeresen elindítva!</h3>
+                        <p class="text-muted">A levelek a háttérben kerülnek kiküldésre @recipientCount címzettnek.</p>
+                        <button class="btn btn-primary rounded-pill mt-3 w-50 mx-auto" @onclick="ResetForm">Új levél írása</button>
+                    </div>
+                }
+                else
+                {
+                    <h5 class="fw-bold mb-4"><i class="bi bi-envelope-plus me-2"></i>Új kampány létrehozása</h5>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Tárgy</label>
+                        <input class="form-control" @bind="subject" placeholder="Pl: Hétvégi akció csak neked!" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Csatolt kupon (Opcionális)</label>
+                        <select class="form-select" @bind="selectedCouponId">
+                            <option value="">-- Nincs kupon --</option>
+                            @foreach (var c in activeCoupons)
+                            {
+                                <option value="@c.Id">@c.Code (@c.Value @(c.Type == CouponType.Percentage ? "%" : "Ft"))</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Üzenet szövege</label>
+                        <textarea class="form-control" rows="6" @bind="messageBody" placeholder="Írd ide a hírlevél tartalmát..."></textarea>
+                        <div class="form-text">A levél aljára automatikusan odakerül a leiratkozási link.</div>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mt-auto">
+                        <span class="text-muted small">
+                            <i class="bi bi-info-circle me-1"></i>
+                            A küldés a háttérben történik.
+                        </span>
+                        <button class="btn btn-primary rounded-pill px-5 py-2 fw-bold shadow-sm"
+                                @onclick="HandleSendNewsletter"
+                                disabled="@(isSending || subscriberList.Count == 0)">
+                            @if (isSending)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                        
+                                <span>Küldés...</span>
+                            }
+                            else
+                            {
+                                <span><i class="bi bi-send me-2"></i>Küldés indítása (@subscriberList.Count)</span>
+                            }
+                        </button>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @* --- JOBB OSZLOP: TIPPEK ÉS LISTA --- *@
+        <div class="col-lg-5">
+            <div class="d-flex flex-column gap-4 h-100">
+
+                @* TIPPEK KÁRTYA *@
+                <div class="alert alert-info rounded-4 border-0 shadow-sm mb-0">
+                    <h5 class="alert-heading fw-bold"><i class="bi bi-lightbulb me-2"></i>Tippek</h5>
+                    <p class="mb-0 small">
+                        Ne küldj túl gyakran levelet, mert a felhasználók leiratkozhatnak.
+                        A kupon kiválasztásával a rendszer automatikusan beilleszti a kuponkódot és a kedvezmény mértékét a levélbe.
+                    </p>
+                </div>
+
+                @* FELIRATKOZÓK LISTÁJA *@
+                <div class="card border-0 shadow-sm rounded-4 flex-grow-1 overflow-hidden" style="min-height: 400px;">
+                    <div class="card-header bg-white py-3 border-0 d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 fw-bold"><i class="bi bi-people-fill me-2"></i>Címzettek listája</h6>
+                        <span class="badge bg-primary rounded-pill">@subscriberList.Count db</span>
+                    </div>
+                    <div class="card-body p-0 overflow-auto" style="max-height: 400px;">
+                        @if (subscriberList.Count == 0)
+                        {
+                            <div class="text-center py-5 text-muted">
+                                <i class="bi bi-emoji-frown fs-1"></i>
+                                <p class="mt-2">Még nincsenek feliratkozók.</p>
+                            </div>
+                        }
+                        else
+                        {
+                            <table class="table table-hover align-middle mb-0 table-sm">
+                                <thead class="bg-light sticky-top">
+                                    <tr>
+                                        <th class="ps-4">Email</th>
+                                        <th class="text-end pe-4">Típus</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var sub in subscriberList)
+                                    {
+                                        <tr>
+                                            <td class="ps-4 text-truncate" style="max-width: 200px;" title="@sub.Email">
+                                                @sub.Email
+                                            </td>
+                                            <td class="text-end pe-4">
+                                                @if (sub.Source == "User")
+                                                {
+                                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">Regisztrált</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill">Vendég</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string subject = "";
+    private string messageBody = "";
+    private int? selectedCouponId;
+    private List<Coupon> activeCoupons = new();
+    private bool isSending = false;
+    private bool sendingComplete = false;
+    private int recipientCount = 0;
+
+    // Lista a táblázathoz
+    private List<SubscriberModel> subscriberList = new();
+
+    // Segédmodell a megjelenítéshez
+    public class SubscriberModel
+    {
+        public string Email { get; set; } = "";
+        public string Source { get; set; } = ""; // "User" vagy "Guest"
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        using var context = DbFactory.CreateDbContext();
+        activeCoupons = await context.Coupons.Where(c => c.IsActive && (c.ExpiryDate == null || c.ExpiryDate > DateTime.Now)).ToListAsync();
+
+        // 1. Regisztráltak betöltése
+        var users = await context.Users
+            .Where(u => u.IsNewsletterSubscribed && u.Email != null)
+            .Select(u => new SubscriberModel { Email = u.Email!, Source = "User" })
+            .ToListAsync();
+
+        // 2. Vendégek betöltése
+        var guests = await context.NewsletterSubscribers
+            .Where(s => s.IsActive)
+            .Select(s => new SubscriberModel { Email = s.Email, Source = "Guest" })
+            .ToListAsync();
+
+        // 3. Egyesítés és duplikáció szűrés (email alapján)
+        subscriberList = users.Concat(guests)
+            .GroupBy(x => x.Email)
+            .Select(g => g.First()) // Ha duplikált, az elsőt vesszük (preferáljuk a User-t ha előbb van a listában)
+            .OrderBy(x => x.Email)
+            .ToList();
+    }
+
+    private async Task HandleSendNewsletter()
+    {
+        if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(messageBody)) return;
+
+        isSending = true;
+        // Az aktuális listát használjuk a küldéshez
+        var recipients = subscriberList.Select(s => s.Email).ToList();
+        recipientCount = recipients.Count;
+
+        Coupon? coupon = null;
+        if (selectedCouponId.HasValue)
+        {
+            using var context = DbFactory.CreateDbContext();
+            coupon = await context.Coupons.FindAsync(selectedCouponId);
+        }
+
+        var baseUrl = GetBaseUrl(); // Elmentjük, hogy ne hívjuk meg minden ciklusban
+
+        // A háttérben küldjük
+        _ = Task.Run(async () =>
+        {
+            foreach (var email in recipients)
+            {
+                EmailQueue.QueueEmail(async (token) =>
+                {
+                    using var scope = ServiceProvider.CreateScope();
+                    var mailer = scope.ServiceProvider.GetRequiredService<EmailService>();
+
+                    var fullBody = $@"
+                        <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; line-height: 1.6;'>
+
+                            <div style='background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 3px solid #0d6efd;'>
+                                <h2 style='margin: 0; color: #0d6efd;'>Modern Webshop</h2>
+                                <p style='margin: 5px 0 0; font-size: 14px; color: #666;'>Hírlevél és Akciók</p>
+                            </div>
+
+                            <div style='padding: 30px 20px;'>
+                                <h3 style='margin-top: 0;'>Kedves Vásárlónk!</h3>
+                                <div style='font-size: 16px;'>
+                                    {messageBody.Replace("\n", "<br>")}
+                                </div>
+
+                                {(coupon != null ? $@"
+                                    <div style='background: #eef5ff; padding: 20px; border-radius: 10px; border: 2px dashed #0d6efd; text-align: center; margin: 30px 0;'>
+                                        <p style='margin: 0 0 10px; font-weight: bold; color: #555; text-transform: uppercase; font-size: 12px;'>Kiemelt ajánlatunk</p>
+                                        <h2 style='margin: 0; color: #0d6efd; letter-spacing: 2px; font-size: 32px;'>{coupon.Code}</h2>
+                                        <p style='margin: 10px 0 0; font-size: 18px; font-weight: bold;'>
+                                            {(coupon.Type == CouponType.Percentage ? $"{coupon.Value}%" : $"{coupon.Value} Ft")} kedvezmény
+                                        </p>
+                                    </div>" : "")}
+
+                                <div style='text-align: center; margin: 40px 0;'>
+                                    <a href='{baseUrl}'
+                                       style='background-color: #0d6efd; color: white; padding: 15px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(13, 110, 253, 0.2);'>
+                                        Irány a webshop! ➔
+                                    </a>
+                                </div>
+                            </div>
+
+                            <div style='background-color: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #ddd;'>
+                                <p style='margin: 0 0 10px;'>
+                                    Ezt a levelet a <strong>Modern Webshop</strong> küldte neked.<br>
+                                    1234 Budapest, Példa utca 12. | info@modernwebshop.hu
+                                </p>
+                                <p style='margin: 0;'>
+                                    Azért kaptad ezt az üzenetet, mert feliratkoztál hírlevelünkre.<br>
+                                    Ha nem szeretnél több levelet kapni, kattints ide:
+                                    <a href='{baseUrl}unsubscribe?email={email}' style='color: #0d6efd; text-decoration: underline;'>Leiratkozás</a>
+                                </p>
+                            </div>
+                        </div>
+                    ";
+
+                    await mailer.SendEmailAsync(email, subject, fullBody);
+                });
+
+                await Task.Delay(50);
+            }
+        });
+
+        isSending = false;
+        sendingComplete = true;
+        StateHasChanged();
+    }
+
+    private void ResetForm()
+    {
+        subject = "";
+        messageBody = "";
+        selectedCouponId = null;
+        sendingComplete = false;
+    }
+
+    private string GetBaseUrl()
+    {
+        var url = Config["AppUrl"];
+
+        if (string.IsNullOrEmpty(url))
+            return "https://localhost:7188/";
+
+        return url.EndsWith("/") ? url : url + "/";
+    }
+}

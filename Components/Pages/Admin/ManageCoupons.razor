@@ -1,0 +1,313 @@
+﻿@page "/admin/coupons"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Kuponok Kezelése</PageTitle>
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold">Kuponok</h2>
+        <button class="btn btn-primary rounded-pill px-4" @onclick="PrepareNewCoupon">
+            <i class="bi bi-plus-lg me-2"></i> Új kupon
+        </button>
+    </div>
+
+    @* --- SZŰRŐ PANEL --- *@
+    <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-light">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-0"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control border-0 shadow-none"
+                           placeholder="Keresés kód alapján..."
+                           @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select border-0 shadow-none" @bind="filterType">
+                    <option value="">Összes típus</option>
+                    @foreach (var type in Enum.GetValues<CouponType>())
+                    {
+                        <option value="@type">@GetTypeName(type)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select border-0 shadow-none" @bind="filterActiveStatus">
+                    <option value="all">Összes állapot</option>
+                    <option value="active">Csak aktív és érvényes</option>
+                    <option value="inactive">Inaktív vagy lejárt</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-center justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm rounded-pill" @onclick="ClearFilters">Szűrők törlése</button>
+            </div>
+        </div>
+    </div>
+
+    @if (coupons == null)
+    {
+        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-dark text-white">
+                        <tr>
+                            <th class="ps-4 py-3">Kód</th>
+                            <th>Állapot</th>
+                            <th>Típus</th>
+                            <th>Kedvezmény</th>
+                            <th>Minimum limit</th>
+                            <th>Használat</th>
+                            <th>Lejárat</th>
+                            <th class="text-end pe-4">Műveletek</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var coupon in FilteredCoupons)
+                        {
+                            var isValid = IsCouponValid(coupon);
+                            <tr class="@(isValid ? "" : "text-muted opacity-75")">
+                                <td class="ps-4">
+                                    <span class="badge bg-primary px-3 py-2">@coupon.Code</span>
+                                </td>
+                                <td>
+                                    @if (!coupon.IsActive)
+                                    {
+                                        <span class="badge rounded-pill bg-danger">Inaktív</span>
+                                    }
+                                    else if (coupon.ExpiryDate != null && coupon.ExpiryDate < DateTime.Now)
+                                    {
+                                        <span class="badge rounded-pill bg-warning text-dark">Lejárt</span>
+                                    }
+                                    else if (coupon.MaxUsages > 0 && coupon.UsedCount >= coupon.MaxUsages)
+                                    {
+                                        <span class="badge rounded-pill bg-secondary">Elfogyott</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge rounded-pill bg-success">Érvényes</span>
+                                    }
+                            </td>
+                            <td><small>@GetTypeName(coupon.Type)</small></td>
+                            <td class="fw-bold">
+                                @(coupon.Type == CouponType.Percentage ? $"{coupon.Value}%" :
+                                                            (coupon.Type == CouponType.FreeShipping ? "Ingyenes szállítás" : $"{coupon.Value:N0} Ft"))
+                                </td>
+                                <td>@coupon.MinimumOrderAmount.ToString("N0") Ft</td>
+                                <td>
+                                    <div class="progress" style="height: 6px; width: 80px;">
+                                        @{
+                                            var percent = coupon.MaxUsages > 0 ? (double)coupon.UsedCount / coupon.MaxUsages * 100 : 0;
+                                        }
+                                        <div class="progress-bar @(percent >= 100 ? "bg-danger" : "bg-info")" style="width: @(coupon.MaxUsages > 0 ? percent : 0)%"></div>
+                                    </div>
+                                    <small class="text-muted">@coupon.UsedCount / @(coupon.MaxUsages == 0 ? "∞" : coupon.MaxUsages)</small>
+                                </td>
+                                <td>
+                                    <span class="small">@(coupon.ExpiryDate?.ToString("yyyy.MM.dd.") ?? "Végtelen")</span>
+                                </td>
+                                <td class="text-end pe-4">
+                                    <button class="btn btn-sm btn-outline-dark rounded-circle me-1" @onclick="() => EditCoupon(coupon)" title="Szerkesztés">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger rounded-circle" @onclick="() => DeleteCoupon(coupon.Id)" title="Deaktiválás">
+                                        <i class="bi bi-slash-circle"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@if (editingCoupon != null)
+{
+    <div class="modal d-block shadow" tabindex="-1" style="background: rgba(0,0,0,0.7); z-index: 1050;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <EditForm Model="editingCoupon" OnValidSubmit="SaveCoupon">
+                    <DataAnnotationsValidator />
+                    <div class="modal-header border-0 bg-light">
+                        <h5 class="fw-bold m-0">@(editingCoupon.Id == 0 ? "Új kupon felvitele" : "Kupon szerkesztése")</h5>
+                        <button type="button" class="btn-close" @onclick="() => editingCoupon = null"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="fw-bold small text-muted text-uppercase">Kupon kód</label>
+                                <InputText @bind-Value="editingCoupon.Code" class="form-control rounded-3 text-uppercase fw-bold" placeholder="pl. AKCIO20" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="fw-bold small text-muted text-uppercase">Típus</label>
+                                <InputSelect @bind-Value="editingCoupon.Type" class="form-select rounded-3">
+                                    @foreach (var type in Enum.GetValues<CouponType>())
+                                    {
+                                        <option value="@type">@GetTypeName(type)</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="fw-bold small text-muted text-uppercase">Érték</label>
+                                <InputNumber @bind-Value="editingCoupon.Value" class="form-control rounded-3" disabled="@(editingCoupon.Type == CouponType.FreeShipping)" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="fw-bold small text-muted text-uppercase">Min. rendelés (Ft)</label>
+                                <InputNumber @bind-Value="editingCoupon.MinimumOrderAmount" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="fw-bold small text-muted text-uppercase">Max. használat (0=∞)</label>
+                                <InputNumber @bind-Value="editingCoupon.MaxUsages" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-12">
+                                <label class="fw-bold small text-muted text-uppercase">Lejárati dátum</label>
+                                <InputDate @bind-Value="editingCoupon.ExpiryDate" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch p-3 ps-5 bg-light rounded-3 mt-2">
+                                    <InputCheckbox @bind-Value="editingCoupon.IsActive" class="form-check-input" id="couponActive" />
+                                    <label class="form-check-label small fw-bold" for="couponActive">A kupon használható (Aktív)</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0">
+                        <button type="button" class="btn btn-light rounded-pill px-4" @onclick="() => editingCoupon = null">Mégse</button>
+                        <button type="submit" class="btn btn-primary rounded-pill px-5">Mentés</button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Coupon>? coupons;
+    private Coupon? editingCoupon;
+
+    // Szűréshez szükséges változók
+    private string searchTerm = "";
+    private string filterType = "";
+    private string filterActiveStatus = "all";
+
+    protected override async Task OnInitializedAsync() => await LoadCoupons();
+
+    private async Task LoadCoupons()
+    {
+        using var context = DbFactory.CreateDbContext();
+        coupons = await context.Coupons.OrderByDescending(c => c.Id).ToListAsync();
+    }
+
+    private IEnumerable<Coupon> FilteredCoupons
+    {
+        get
+        {
+            if (coupons == null) return Enumerable.Empty<Coupon>();
+
+            var query = coupons.AsEnumerable();
+
+            // Keresés kód alapján
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = query.Where(c => c.Code.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+            }
+
+            // Típus szűrés
+            if (!string.IsNullOrEmpty(filterType))
+            {
+                query = query.Where(c => c.Type.ToString() == filterType);
+            }
+
+            // Állapot szűrés
+            if (filterActiveStatus == "active")
+            {
+                query = query.Where(c => IsCouponValid(c));
+            }
+            else if (filterActiveStatus == "inactive")
+            {
+                query = query.Where(c => !IsCouponValid(c));
+            }
+
+            return query;
+        }
+    }
+
+    private bool IsCouponValid(Coupon c)
+    {
+        bool dateOk = c.ExpiryDate == null || c.ExpiryDate > DateTime.Now;
+        bool usageOk = c.MaxUsages == 0 || c.UsedCount < c.MaxUsages;
+        return c.IsActive && dateOk && usageOk;
+    }
+
+    private void ClearFilters()
+    {
+        searchTerm = "";
+        filterType = "";
+        filterActiveStatus = "all";
+    }
+
+    private void PrepareNewCoupon() => editingCoupon = new Coupon { ExpiryDate = DateTime.Now.AddMonths(1), IsActive = true };
+
+    private void EditCoupon(Coupon c) => editingCoupon = new Coupon
+    {
+        Id = c.Id,
+        Code = c.Code,
+        Type = c.Type,
+        Value = c.Value,
+        MinimumOrderAmount = c.MinimumOrderAmount,
+        MaxUsages = c.MaxUsages,
+        UsedCount = c.UsedCount,
+        ExpiryDate = c.ExpiryDate,
+        IsActive = c.IsActive
+    };
+
+    private async Task SaveCoupon()
+    {
+        using var context = DbFactory.CreateDbContext();
+        editingCoupon!.Code = editingCoupon.Code.ToUpper();
+
+        if (editingCoupon.Id == 0)
+        {
+            context.Coupons.Add(editingCoupon);
+        }
+        else
+        {
+            context.Entry(editingCoupon).State = EntityState.Modified;
+        }
+
+        await context.SaveChangesAsync();
+        editingCoupon = null;
+        await LoadCoupons();
+    }
+
+    private async Task DeleteCoupon(int id)
+    {
+        using var context = DbFactory.CreateDbContext();
+        var c = await context.Coupons.FindAsync(id);
+        if (c != null)
+        {
+            c.IsActive = !c.IsActive; // Törlés helyett kapcsoljuk a státuszt
+            await context.SaveChangesAsync();
+            await LoadCoupons();
+        }
+    }
+
+    private string GetTypeName(CouponType type) => type switch
+    {
+        CouponType.Percentage => "Százalékos",
+        CouponType.FixedAmount => "Fix összeg",
+        CouponType.FreeShipping => "Ingyenes szállítás",
+        _ => type.ToString()
+    };
+}

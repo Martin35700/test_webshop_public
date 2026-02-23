@@ -1,0 +1,51 @@
+﻿@using webshop.Services
+@inject NewsletterService NewsletterService
+@rendermode InteractiveServer
+
+<div class="card border-0 bg-dark text-white rounded-4 p-4 text-center">
+    <h5 class="fw-bold mb-3"><i class="bi bi-envelope-heart me-2"></i>Iratkozz fel hírlevelünkre!</h5>
+    <p class="small text-white-50 mb-3">Értesülj elsőként az akciókról és kuponokról.</p>
+
+    @if (isSubscribed)
+    {
+        <div class="alert alert-success rounded-pill py-2 animate__animated animate__fadeIn">
+            <i class="bi bi-check-circle me-2"></i>Sikeres feliratkozás!
+        </div>
+    }
+    else
+    {
+        <div class="input-group mb-2">
+            <input type="email" class="form-control rounded-start-pill border-0"
+                   placeholder="Email címed..." @bind="email" />
+            <button class="btn btn-primary rounded-end-pill px-4 fw-bold"
+                    @onclick="Subscribe" disabled="@isProcessing">
+                @if (isProcessing)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                }
+                else
+                {
+
+                    <span>Mehet</span>
+                }
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private string email = "";
+    private bool isProcessing = false;
+    private bool isSubscribed = false;
+
+    private async Task Subscribe()
+    {
+        if (string.IsNullOrWhiteSpace(email) || !email.Contains("@")) return;
+
+        isProcessing = true;
+        await NewsletterService.SubscribeGuestAsync(email);
+        isProcessing = false;
+        isSubscribed = true;
+        StateHasChanged();
+    }
+}

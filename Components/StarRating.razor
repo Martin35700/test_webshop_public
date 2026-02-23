@@ -1,0 +1,21 @@
+﻿@for (int i = 1; i <= 5; i++)
+{
+    var starIndex = i;
+    if (starIndex <= Rating + 0.25)
+    {
+        <i class="bi bi-star-fill @CssClass"></i>
+    }
+    else if (starIndex - 0.75 <= Rating)
+    {
+        <i class="bi bi-star-half @CssClass"></i>
+    }
+    else
+    {
+        <i class="bi bi-star @CssClass"></i>
+    }
+}
+
+@code {
+    [Parameter] public double Rating { get; set; }
+    [Parameter] public string CssClass { get; set; } = "text-warning";
+}

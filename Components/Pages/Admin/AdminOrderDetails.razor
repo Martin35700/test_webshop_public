@@ -1,0 +1,415 @@
+﻿@page "/admin/order/{OrderId:int}"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using webshop.Services
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+@inject EmailService EmailService
+@inject AuthenticationStateProvider AuthStateProvider
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+
+<div class="container py-4">
+    <button class="btn btn-outline-secondary mb-4 shadow-sm rounded-pill px-4" @onclick='() => Nav.NavigateTo("/admin/orders")'>
+        <i class="bi bi-arrow-left me-2"></i> Vissza a rendelésekhez
+    </button>
+
+    @if (order == null)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted fw-bold">Rendelés adatai betöltése...</p>
+        </div>
+    }
+    else
+    {
+        <div class="row g-4">
+            @* Bal oszlop: Rendelés tételei *@
+            <div class="col-lg-8">
+                <div class="card border-0 shadow-sm rounded-4 mb-4 overflow-hidden">
+                    <div class="card-header bg-white py-3 border-bottom">
+                        <h5 class="fw-bold mb-0">Rendelés tételei (#@order.Id)</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table align-middle mb-0">
+                                <thead class="bg-light small text-muted text-uppercase">
+                                    <tr>
+                                        <th class="ps-4 py-3">Termék</th>
+                                        <th class="text-center py-3">Egységár</th>
+                                        <th class="text-center py-3">Mennyiség</th>
+                                        <th class="text-end pe-4 py-3">Összesen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var item in order.Items)
+                                    {
+                                        <tr>
+                                            <td class="ps-4">
+                                                <div class="fw-bold text-dark">@item.ProductName</div>
+                                                <small class="text-muted">ID: @item.ProductId</small>
+                                            </td>
+                                            <td class="text-center">@item.Price.ToString("N0") Ft</td>
+                                            <td class="text-center">@item.Quantity db</td>
+                                            <td class="text-end pe-4 fw-bold text-primary">@((item.Price * item.Quantity).ToString("N0")) Ft</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    @* PÉNZÜGYI ÖSSZESÍTŐ *@
+                    <div class="card-footer bg-light border-0 p-4">
+                        <div class="row justify-content-end">
+                            <div class="col-md-6 col-lg-5">
+                                @{
+                                    var itemsTotal = order.Items.Sum(i => i.Price * i.Quantity);
+                                }
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted small">Tételek részösszege:</span>
+                                    <span class="small fw-bold">@itemsTotal.ToString("N0") Ft</span>
+                                </div>
+
+                                @if (order.DiscountAmount > 0)
+                                {
+                                    <div class="d-flex justify-content-between mb-2 text-success fw-bold">
+                                        <span class="small">Kupon kedvezmény:</span>
+                                        <span class="small">-@order.DiscountAmount.ToString("N0") Ft</span>
+                                    </div>
+                                }
+
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted small">Szállítási díj:</span>
+                                    <span class="small">@(order.ShippingFee > 0 ? $"{order.ShippingFee:N0} Ft" : "Ingyenes")</span>
+                                </div>
+                                <hr class="my-3" />
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="h5 fw-bold mb-0">Végösszeg:</span>
+                                    <span class="h4 fw-bold text-primary mb-0">@order.TotalAmount.ToString("N0") Ft</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @* Jobb oszlop: Állapot és Vásárló *@
+            <div class="col-lg-4">
+                <div class="card border-0 shadow-sm rounded-4 mb-4 p-2">
+                    <div class="card-body">
+                        <h5 class="fw-bold mb-4 text-dark"><i class="bi bi-gear-fill me-2 text-primary"></i>Státusz kezelése</h5>
+
+                        <div class="mb-3">
+                            <label class="small fw-bold text-muted mb-1 text-uppercase">Rendelés állapota</label>
+                            <select class="form-select border-2 rounded-3" @bind="order.Status" disabled="@isSaving">
+                                @foreach (var status in Enum.GetValues<OrderStatus>())
+                                {
+                                    <option value="@status">@status</option>
+                                }
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="small fw-bold text-muted mb-1 text-uppercase">Fizetési állapot</label>
+                            <select class="form-select border-2 rounded-3" @bind="order.PaymentStatus" disabled="@isSaving">
+                                @foreach (var pStatus in Enum.GetValues<PaymentStatus>())
+                                {
+                                    <option value="@pStatus">@pStatus</option>
+                                }
+                            </select>
+                        </div>
+
+                        <button class="btn btn-primary w-100 rounded-pill fw-bold py-3 shadow" @onclick="SaveChanges" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                                <span>FELDOLGOZÁS...</span>
+                            }
+                            else
+                            {
+                                <span>MÓDOSÍTÁSOK MENTÉSE</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow-sm rounded-4 text-white bg-dark">
+                    <div class="card-body position-relative p-4">
+                        <h5 class="fw-bold mb-4"><i class="bi bi-person-circle me-2"></i>Vásárló adatai</h5>
+
+                        @* --- TILTÁS GOMB --- *@
+                        <div class="position-absolute top-0 end-0 p-3">
+                            @if (isBlacklisted)
+                            {
+                                <button class="btn btn-sm btn-danger rounded-pill px-3 shadow" @onclick="ToggleBlacklist" title="Tiltás feloldása">
+                                    <i class="bi bi-slash-circle me-1"></i> Tiltva
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-outline-light rounded-pill px-3" @onclick="ToggleBlacklist" title="Email cím tiltása">
+                                    <i class="bi bi-slash-circle me-1"></i> Tiltás
+                                </button>
+                            }
+                        </div>
+
+                        <div class="mb-4">
+                            <p class="mb-0 fw-bold fs-5">@order.CustomerName</p>
+                            <p class="mb-1 small @(isBlacklisted ? "text-danger fw-bold" : "text-light opacity-75")">
+                                @order.Email
+                                @if (isBlacklisted)
+                                {
+                                    <i class="bi bi-exclamation-triangle-fill ms-1"></i>
+                                }
+                            </p>
+                            <p class="mb-0 small text-light opacity-75"><i class="bi bi-telephone me-2"></i>@order.PhoneNumber</p>
+                        </div>
+
+                        <hr class="border-secondary opacity-25" />
+
+                        @* --- CÍMEK MEGJELENÍTÉSE --- *@
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <h6 class="small text-uppercase text-primary fw-bold mb-2">Szállítási cím</h6>
+                                <p class="mb-0 small text-light">@order.Zip @order.City</p>
+                                <p class="mb-0 small text-light opacity-75">@order.Address</p>
+                            </div>
+
+                            <div class="col-12 mt-4">
+                                <h6 class="small text-uppercase text-primary fw-bold mb-2">Számlázási cím</h6>
+                                @{
+                                    var bZip = string.IsNullOrWhiteSpace(order.BillingZip) ? order.Zip : order.BillingZip;
+                                    var bCity = string.IsNullOrWhiteSpace(order.BillingCity) ? order.City : order.BillingCity;
+                                    var bAddress = string.IsNullOrWhiteSpace(order.BillingAddress) ? order.Address : order.BillingAddress;
+                                }
+                                <p class="mb-0 small text-light">@bZip @bCity</p>
+                                <p class="mb-0 small text-light opacity-75">@bAddress</p>
+                            </div>
+                        </div>
+
+                        <hr class="border-secondary opacity-25" />
+
+                        <div class="bg-secondary bg-opacity-25 p-3 rounded-3 mt-2">
+                            <p class="mb-1 small text-light"><span class="fw-bold">Mód:</span> @order.ShippingMethod</p>
+                            <p class="mb-0 small text-light"><span class="fw-bold">Fizetés:</span> @order.PaymentMethod</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@* --- TOAST ÉRTESÍTÉS --- *@
+@if (showToast)
+{
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 2000;">
+        <div class="toast show align-items-center text-white bg-success border-0 shadow-lg animate-fade-in rounded-4" role="alert">
+            <div class="d-flex">
+                <div class="toast-body p-3">
+                    <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+                    <span class="fw-bold">@toastMessage</span>
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto shadow-none" @onclick="() => showToast = false"></button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .animate-fade-in {
+        animation: fadeIn 0.3s ease-out;
+    }
+
+    @@keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public int OrderId { get; set; }
+    private Order? order;
+    private bool showToast = false;
+    private string toastMessage = "";
+    private bool isSaving = false;
+    private bool isDetailsLoading = false;
+    private bool isBlacklisted = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrder();
+        await CheckBlacklistStatus();
+    }
+
+    private async Task LoadOrder()
+    {
+        isDetailsLoading = true;
+        using var context = DbFactory.CreateDbContext();
+
+        order = await context.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == OrderId);
+
+        isDetailsLoading = false;
+    }
+
+    private async Task CheckBlacklistStatus()
+    {
+        if (order == null) return;
+
+        using var context = DbFactory.CreateDbContext();
+        isBlacklisted = await context.BlacklistedUsers.AnyAsync(b => b.Email.ToLower() == order.Email.ToLower());
+    }
+
+    private async Task ToggleBlacklist()
+    {
+        if (order == null) return;
+
+        using var context = DbFactory.CreateDbContext();
+        var existingBan = await context.BlacklistedUsers.FirstOrDefaultAsync(b => b.Email.ToLower() == order.Email.ToLower());
+
+        if (existingBan != null)
+        {
+            context.BlacklistedUsers.Remove(existingBan);
+            await context.SaveChangesAsync();
+            isBlacklisted = false;
+            toastMessage = "Tiltás feloldva!";
+        }
+        else
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var adminName = authState.User.Identity?.Name ?? "Admin";
+
+            context.BlacklistedUsers.Add(new BlacklistedUser
+            {
+                Email = order.Email,
+                Reason = $"Rendelés #{order.Id} miatt tiltva",
+                AddedBy = adminName,
+                AddedAt = DateTime.Now
+            });
+            await context.SaveChangesAsync();
+            isBlacklisted = true;
+            toastMessage = "Email cím tiltólistára téve!";
+        }
+
+        showToast = true;
+        StateHasChanged();
+        await Task.Delay(3000);
+        showToast = false;
+        StateHasChanged();
+    }
+
+    private async Task SaveChanges()
+    {
+        if (order == null) return;
+        isSaving = true;
+
+        try
+        {
+            using var context = DbFactory.CreateDbContext();
+
+            var dbOrder = await context.Orders
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.Id == OrderId);
+
+            if (dbOrder != null)
+            {
+                var oldStatus = dbOrder.Status;
+                var newStatus = order.Status;
+
+                // --- KÉSZLETKEZELÉS ---
+                if (newStatus == OrderStatus.Lemondva && oldStatus != OrderStatus.Lemondva)
+                {
+                    foreach (var item in dbOrder.Items)
+                    {
+                        var product = await context.Products.FindAsync(item.ProductId);
+                        if (product != null)
+                        {
+                            product.Stock += item.Quantity;
+                        }
+                    }
+                }
+                else if (newStatus != OrderStatus.Lemondva && oldStatus == OrderStatus.Lemondva)
+                {
+                    foreach (var item in dbOrder.Items)
+                    {
+                        var product = await context.Products.FindAsync(item.ProductId);
+                        if (product != null)
+                        {
+                            product.Stock = Math.Max(0, product.Stock - item.Quantity);
+                        }
+                    }
+                }
+
+                // --- AUTOMATIKUS TÉTEL PIPÁLÁS ---
+                if (newStatus == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                {
+                    foreach (var item in dbOrder.Items)
+                    {
+                        item.IsPicked = true;
+                    }
+                }
+
+                // Adatok mentése
+                dbOrder.Status = newStatus;
+                dbOrder.PaymentStatus = order.PaymentStatus;
+
+                await context.SaveChangesAsync();
+
+                // --- ÚJ EMAIL LOGIKA: VÉLEMÉNY KÉRÉS ---
+                if (newStatus == OrderStatus.Teljesítve && oldStatus != OrderStatus.Teljesítve)
+                {
+                    try
+                    {
+                        await EmailService.SendOrderCompletedReviewEmailAsync(dbOrder);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Review Email hiba: {ex.Message}");
+                    }
+                }
+
+                // --- EMAIL LOGIKA: ÖSSZEKÉSZÍTVE ---
+                if (newStatus == OrderStatus.Feldolgozva && oldStatus != OrderStatus.Feldolgozva)
+                {
+                    try
+                    {
+                        await EmailService.SendStatusUpdateEmailAsync(dbOrder, "Rendelésedet összekészítettük!");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Status Email hiba: {ex.Message}");
+                    }
+                }
+
+                toastMessage = "A módosítások sikeresen mentve!";
+                showToast = true;
+                StateHasChanged();
+
+                await Task.Delay(3000);
+                showToast = false;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba mentés közben: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+}

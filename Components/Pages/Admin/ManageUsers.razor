@@ -1,0 +1,462 @@
+﻿@page "/admin/users"
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject UserManager<ApplicationUser> UserManager
+@inject RoleManager<IdentityRole> RoleManager
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+
+<PageTitle>Felhasználók kezelése - Admin</PageTitle>
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold m-0">Felhasználók</h2>
+            <p class="text-muted mb-0">Regisztrált vásárlók és adminisztrátorok kezelése.</p>
+        </div>
+        <span class="badge bg-dark rounded-pill">Összesen: @users.Count db</span>
+    </div>
+
+    @* HIBAÜZENET *@
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show shadow-sm rounded-3 mb-4" role="alert">
+            <i class="bi bi-exclamation-octagon-fill me-2"></i> @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+        </div>
+    }
+
+    @* --- FÜLEK (TABS) --- *@
+    <ul class="nav nav-pills mb-4 gap-2">
+        <li class="nav-item">
+            <button class="nav-link rounded-pill px-4 @(activeTab == "users" ? "active" : "bg-light text-dark")"
+                    @onclick='() => activeTab = "users"'>
+                <i class="bi bi-people-fill me-2"></i>Regisztrált felhasználók
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link rounded-pill px-4 @(activeTab == "blacklist" ? "active bg-danger" : "bg-light text-dark")"
+                    @onclick='() => activeTab = "blacklist"'>
+                <i class="bi bi-slash-circle me-2"></i>Tiltólista (Vendégek)
+                @if (blacklistedUsers.Count > 0)
+                {
+                    <span class="badge bg-white text-danger ms-2 rounded-pill">@blacklistedUsers.Count</span>
+                }
+            </button>
+        </li>
+    </ul>
+
+    @if (activeTab == "users")
+    {
+        @* --- REGISZTRÁLT FELHASZNÁLÓK TAB --- *@
+
+        @* KERESŐ *@
+        <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-light animate__animated animate__fadeIn">
+            <div class="input-group">
+                <span class="input-group-text bg-white border-0"><i class="bi bi-search"></i></span>
+                <input type="text" class="form-control border-0 shadow-none"
+                       placeholder="Keresés név vagy email alapján..."
+                       @bind="searchTerm" @bind:event="oninput" />
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden animate__animated animate__fadeIn">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-dark text-white">
+                        <tr>
+                            <th class="ps-4">Felhasználó</th>
+                            <th>Email</th>
+                            <th>Rendelések</th>
+                            <th>Szerepkör</th>
+                            <th>Státusz</th>
+                            <th class="text-end pe-4">Műveletek</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var user in FilteredUsers)
+                        {
+                            <tr>
+                                <td class="ps-4">
+                                    <div class="fw-bold">@user.FullName</div>
+                                    <div class="small text-muted">@user.Zip @user.City</div>
+                                </td>
+                                <td>@user.Email</td>
+                                <td>
+                                    <span class="badge bg-secondary rounded-pill">
+                                        @GetUserOrderCount(user.Id) db
+                                    </span>
+                                </td>
+                                <td>
+                                    @if (userRoles.ContainsKey(user.Id) && userRoles[user.Id].Contains("Admin"))
+                                    {
+                                        <span class="badge bg-primary">ADMIN</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-light text-dark border">Vásárló</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (user.LockoutEnd != null && user.LockoutEnd > DateTimeOffset.Now)
+                                    {
+                                        <span class="badge bg-danger">Zárolva</span>
+                                        <div class="small text-danger">(@user.LockoutEnd?.ToString("MM.dd HH:mm")-ig)</div>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-success">Aktív</span>
+                                    }
+                                </td>
+                                <td class="text-end pe-4">
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-dark rounded-circle" type="button" data-bs-toggle="dropdown">
+                                            <i class="bi bi-three-dots-vertical"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end border-0 shadow rounded-3">
+
+                                            @* RENDELÉSEK MEGTEKINTÉSE *@
+                                            <li>
+                                                <button class="dropdown-item" @onclick="() => ShowUserOrders(user)">
+                                                    <i class="bi bi-bag-check me-2 text-primary"></i>Rendelések
+                                                </button>
+                                            </li>
+
+                                            <li><hr class="dropdown-divider"></li>
+
+                                            @* ADMIN JOG KAPCSOLÁSA *@
+                                            <li>
+                                                <button class="dropdown-item" @onclick="() => ToggleAdminRole(user)">
+                                                    @if (userRoles.ContainsKey(user.Id) && userRoles[user.Id].Contains("Admin"))
+                                                    {
+                                                        <span class="text-danger"><i class="bi bi-person-down me-2"></i>Admin jog elvétele</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-success"><i class="bi bi-person-up me-2"></i>Admin jog adása</span>
+                                                    }
+                                                </button>
+                                            </li>
+
+                                            @* ZÁROLÁS / FELOLDÁS *@
+                                            <li>
+                                                <button class="dropdown-item" @onclick="() => ToggleLockout(user)">
+                                                    @if (user.LockoutEnd != null && user.LockoutEnd > DateTimeOffset.Now)
+                                                    {
+                                                        <span><i class="bi bi-unlock me-2"></i>Feloldás</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-warning"><i class="bi bi-lock me-2"></i>Zárolás (100 évre)</span>
+                                                    }
+                                                </button>
+                                            </li>
+
+                                            <li><hr class="dropdown-divider"></li>
+
+                                            @* TÖRLÉS *@
+                                            <li>
+                                                <button class="dropdown-item text-danger" @onclick="() => DeleteUser(user)">
+                                                    <i class="bi bi-trash3 me-2"></i>Végleges törlés
+                                                </button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    else if (activeTab == "blacklist")
+    {
+        @* --- TILTÓLISTA TAB --- *@
+
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden animate__animated animate__fadeIn">
+            <div class="card-header bg-danger text-white py-3 border-0">
+                <h5 class="m-0 fw-bold"><i class="bi bi-slash-circle me-2"></i>Tiltott e-mail címek</h5>
+                <small class="text-white-50">Ezekről a címekről nem lehet rendelést leadni.</small>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-light">
+                        <tr>
+                            <th class="ps-4">Email cím</th>
+                            <th>Ok</th>
+                            <th>Hozzáadta</th>
+                            <th>Dátum</th>
+                            <th class="text-end pe-4">Művelet</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!blacklistedUsers.Any())
+                        {
+                            <tr>
+                                <td colspan="5" class="text-center py-5 text-muted">
+                                    <i class="bi bi-emoji-smile fs-1 d-block mb-2"></i>
+                                    Nincs tiltott felhasználó.
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var entry in blacklistedUsers)
+                            {
+                                <tr>
+                                    <td class="ps-4 fw-bold text-danger">@entry.Email</td>
+                                    <td class="text-muted fst-italic">@(entry.Reason ?? "Nincs indok megadva")</td>
+                                    <td><span class="badge bg-secondary-subtle text-secondary">@entry.AddedBy</span></td>
+                                    <td class="small text-muted">@entry.AddedAt.ToString("yyyy.MM.dd. HH:mm")</td>
+                                    <td class="text-end pe-4">
+                                        <button class="btn btn-sm btn-outline-success rounded-pill px-3"
+                                                @onclick="() => RemoveFromBlacklist(entry)">
+                                            <i class="bi bi-check-circle me-1"></i> Feloldás
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@* FELHASZNÁLÓ RENDELÉSEI MODAL *@
+@if (showOrdersModal && selectedUserForOrders != null)
+{
+    <div class="modal d-block shadow animate__animated animate__fadeIn" tabindex="-1" style="background: rgba(0,0,0,0.6); z-index: 1050;">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <h5 class="fw-bold m-0"><i class="bi bi-person-lines-fill me-2 text-primary"></i>@selectedUserForOrders.FullName rendelései</h5>
+                        <p class="text-muted small m-0">@selectedUserForOrders.Email</p>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseOrdersModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    @if (userOrderList == null)
+                    {
+                        <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                    }
+                    else if (!userOrderList.Any())
+                    {
+                        <div class="text-center py-5">
+                            <i class="bi bi-bag-x fs-1 text-muted opacity-25"></i>
+                            <p class="text-muted mt-2 fw-bold">Ennek a felhasználónak még nincs rendelése.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="bg-light small text-uppercase">
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Dátum</th>
+                                        <th>Összeg</th>
+                                        <th class="text-center">Állapot</th>
+                                        <th class="text-end">Művelet</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var order in userOrderList)
+                                    {
+                                        <tr>
+                                            <td class="fw-bold">#@order.Id</td>
+                                            <td class="small">@order.OrderDate.ToString("yyyy.MM.dd. HH:mm")</td>
+                                            <td class="fw-bold text-primary">@order.TotalAmount.ToString("N0") Ft</td>
+                                            <td class="text-center">
+                                                <span class="badge rounded-pill @GetStatusClass(order.Status)">@order.Status</span>
+                                            </td>
+                                            <td class="text-end">
+                                                <a href="/admin/order/@order.Id" target="_blank" class="btn btn-sm btn-outline-dark rounded-pill px-3">
+                                                    Megnyitás <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer border-0 pt-0 justify-content-center pb-4">
+                    <button class="btn btn-secondary rounded-pill px-5" @onclick="CloseOrdersModal">Bezárás</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ApplicationUser> users = new();
+    private List<BlacklistedUser> blacklistedUsers = new(); // ÚJ
+    private Dictionary<string, IList<string>> userRoles = new();
+    private Dictionary<string, int> orderCounts = new();
+    private string searchTerm = "";
+    private string? errorMessage = null;
+    private string activeTab = "users"; // "users" vagy "blacklist"
+
+    // --- Rendelés nézegető változók ---
+    private bool showOrdersModal = false;
+    private ApplicationUser? selectedUserForOrders;
+    private List<Order>? userOrderList;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        // 1. Felhasználók betöltése
+        users = await UserManager.Users.ToListAsync();
+
+        using var context = DbFactory.CreateDbContext();
+
+        // 2. Blacklist betöltése
+        blacklistedUsers = await context.BlacklistedUsers.OrderByDescending(b => b.AddedAt).ToListAsync();
+
+        // 3. Statisztikák betöltése
+        userRoles.Clear();
+        orderCounts.Clear();
+
+        foreach (var user in users)
+        {
+            var roles = await UserManager.GetRolesAsync(user);
+            userRoles[user.Id] = roles;
+
+            var count = await context.Orders.CountAsync(o => o.UserId == user.Id);
+            orderCounts[user.Id] = count;
+        }
+    }
+
+    private int GetUserOrderCount(string userId)
+    {
+        return orderCounts.ContainsKey(userId) ? orderCounts[userId] : 0;
+    }
+
+    private IEnumerable<ApplicationUser> FilteredUsers
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm)) return users;
+            return users.Where(u =>
+                (u.FullName?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (u.Email?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false)
+            );
+        }
+    }
+
+    // --- ÚJ: BLACKLIST KEZELÉS ---
+    private async Task RemoveFromBlacklist(BlacklistedUser entry)
+    {
+        using var context = DbFactory.CreateDbContext();
+        context.BlacklistedUsers.Remove(entry);
+        await context.SaveChangesAsync();
+        await LoadData(); // Újratöltés
+    }
+
+    // --- RENDELÉSEK BETÖLTÉSE ---
+    private async Task ShowUserOrders(ApplicationUser user)
+    {
+        selectedUserForOrders = user;
+        showOrdersModal = true;
+        userOrderList = null;
+
+        using var context = DbFactory.CreateDbContext();
+        userOrderList = await context.Orders
+            .Where(o => o.UserId == user.Id)
+            .OrderByDescending(o => o.OrderDate)
+            .ToListAsync();
+    }
+
+    private void CloseOrdersModal()
+    {
+        showOrdersModal = false;
+        selectedUserForOrders = null;
+        userOrderList = null;
+    }
+
+    private string GetStatusClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Teljesítve => "bg-success-subtle text-success",
+        OrderStatus.Feldolgozva => "bg-info-subtle text-info",
+        OrderStatus.Lemondva => "bg-danger-subtle text-danger",
+        OrderStatus.FeldolgozásAlatt => "bg-warning-subtle text-warning",
+        _ => "bg-secondary-subtle text-secondary"
+    };
+
+    private async Task ToggleAdminRole(ApplicationUser targetUser)
+    {
+        errorMessage = null;
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var currentUser = await UserManager.GetUserAsync(authState.User);
+
+        if (await UserManager.IsInRoleAsync(targetUser, "Admin"))
+        {
+            var admins = await UserManager.GetUsersInRoleAsync("Admin");
+            if (admins.Count <= 1)
+            {
+                errorMessage = "Nem veheted el az utolsó Admin jogát! A rendszernek legalább egy adminisztrátorra szüksége van.";
+                return;
+            }
+
+            await UserManager.RemoveFromRoleAsync(targetUser, "Admin");
+
+            if (currentUser != null && currentUser.Id == targetUser.Id)
+            {
+                NavigationManager.NavigateTo("Account/LogoutAction?returnUrl=/", forceLoad: true);
+                return;
+            }
+        }
+        else
+        {
+            await UserManager.AddToRoleAsync(targetUser, "Admin");
+        }
+
+        await UserManager.UpdateSecurityStampAsync(targetUser);
+        await LoadData();
+    }
+
+    private async Task ToggleLockout(ApplicationUser user)
+    {
+        if (user.LockoutEnd != null && user.LockoutEnd > DateTimeOffset.Now)
+        {
+            await UserManager.SetLockoutEndDateAsync(user, null);
+        }
+        else
+        {
+            await UserManager.SetLockoutEndDateAsync(user, DateTimeOffset.Now.AddYears(100));
+        }
+
+        await UserManager.UpdateSecurityStampAsync(user);
+        await LoadData();
+    }
+
+    private async Task DeleteUser(ApplicationUser user)
+    {
+        var result = await UserManager.DeleteAsync(user);
+        if (result.Succeeded)
+        {
+            await LoadData();
+        }
+        else
+        {
+            errorMessage = "Hiba a törlésnél: " + string.Join(", ", result.Errors.Select(e => e.Description));
+        }
+    }
+}

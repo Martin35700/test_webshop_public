@@ -1,0 +1,44 @@
+﻿.product-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+    border-radius: 15px;
+    overflow: hidden;
+}
+
+    .product-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+    }
+
+.img-container {
+    height: 200px;
+    background-color: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+    .img-container img {
+        max-height: 100%;
+        object-fit: cover;
+        transition: scale 0.5s ease;
+    }
+
+.product-card:hover img {
+    scale: 1.05;
+}
+
+.search-box {
+    position: relative;
+}
+
+    .search-box input {
+        padding-left: 15px;
+        border-radius: 10px;
+    }
+
+.form-select {
+    border-radius: 10px;
+    cursor: pointer;
+}

@@ -1,0 +1,15 @@
+﻿.cart-item-card {
+    transition: transform 0.2s ease;
+}
+
+    .cart-item-card:hover {
+        transform: scale(1.01);
+    }
+
+.bg-light {
+    background-color: #f8f9fa !important;
+}
+
+.btn-link:hover {
+    color: #0d6efd !important;
+}

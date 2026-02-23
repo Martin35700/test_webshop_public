@@ -1,0 +1,304 @@
+﻿@page "/order-success/{OrderNumber}"
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using webshop.Models
+@using webshop.Services
+@using webshop.Data
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject StripeService StripeService
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject CartService CartService
+@inject EmailQueue EmailQueue
+@inject PdfService PdfService
+@inject IServiceProvider ServiceProvider
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment Environment
+@rendermode InteractiveServer
+
+<div class="container py-5 text-center">
+    @if (isLoading)
+    {
+        <div class="py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-3 text-muted">Fizetés ellenőrzése...</p>
+        </div>
+    }
+    else if (order != null)
+    {
+        <div class="card border-0 shadow-lg rounded-5 p-5 mx-auto" style="max-width: 650px;">
+            <div class="mb-4">
+                <i class="bi bi-check-circle-fill text-success" style="font-size: 5rem;"></i>
+            </div>
+            <h1 class="fw-bold">Köszönjük a vásárlást!</h1>
+            <p class="text-muted fs-5">Rendelési azonosító: <span class="text-dark fw-bold">#@order.Id</span></p>
+
+            @* --- SPECIÁLIS BLOKK ÁTUTALÁS ESETÉN --- *@
+            @if (order.PaymentMethod == "Utalás" && order.PaymentStatus == PaymentStatus.Fizetendő)
+            {
+                <div class="alert alert-info rounded-4 border-0 p-4 mt-4 text-start shadow-sm">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-bank me-2"></i> Átutalási adatok</h5>
+                    <p class="small text-muted mb-3">A rendelésedet az összeg beérkezése után kezdjük el feldolgozni. Kérjük, utald el a végösszeget az alábbi adatokkal:</p>
+
+                    <div class="bg-white rounded-3 p-3 border">
+                        <div class="row g-2 small">
+                            <div class="col-5 text-muted">Kedvezményezett:</div>
+                            <div class="col-7 fw-bold">Te Cégeted / Neved</div>
+
+                            <div class="col-5 text-muted">Számlaszám:</div>
+                            <div class="col-7 fw-bold">HU00 12345678-12345678-12345678</div>
+
+                            <div class="col-5 text-muted">Összeg:</div>
+                            <div class="col-7 fw-bold text-primary fs-5">@order.TotalAmount.ToString("N0") Ft</div>
+
+                            <div class="col-5 text-muted">Közlemény:</div>
+                            <div class="col-7 fw-bold text-danger">@order.Id</div>
+                        </div>
+                    </div>
+                    <div class="mt-3 small text-muted">
+                        <i class="bi bi-info-circle me-1"></i> A közleménybe kérjük, <strong>csak a rendelésszámot</strong> írd be!
+                    </div>
+                </div>
+            }
+
+            <AuthorizeView>
+                <Authorized>
+                    <div class="alert alert-primary rounded-4 border-0 p-4 mt-4 shadow-sm">
+                        <p class="mb-3 fw-semibold">A rendelés állapotát bármikor megtekintheti a profiljában vagy az alábbi gombra kattintva:</p>
+                        <a href="/track-order/@order.SecretToken" class="btn btn-primary rounded-pill px-5 py-2 fw-bold">
+                            <i class="bi bi-geo-alt me-2"></i>Rendelés követése
+                        </a>
+                    </div>
+                </Authorized>
+                <NotAuthorized>
+                    <div class="alert alert-light border rounded-4 p-4 mt-4 text-start shadow-sm">
+                        <label class="small fw-bold text-uppercase text-muted mb-2 d-block">Egyedi követési hivatkozás:</label>
+                        <p class="small text-muted mb-3">Mentsd el ezt a linket, hogy regisztráció nélkül is ellenőrizhesd a csomagodat:</p>
+
+                        @if (order != null && !isLoading)
+                        {
+                            <div class="input-group">
+                                <input type="text" class="form-control bg-white border-end-0 py-2"
+                                       value="@TrackingUrl" readonly id="trackingUrlInput" />
+
+                                <button class="btn btn-outline-primary border-start-0 px-4"
+                                        type="button"
+                                        @onclick="CopyTrackingUrl">
+                                    <i class="bi @(isCopied ? "bi-check-lg" : "bi-clipboard")"></i>
+                                </button>
+                            </div>
+                        }
+
+                        @if (isCopied)
+                        {
+                            <small class="text-success mt-2 d-block animate__animated animate__fadeIn">
+                                <i class="bi bi-check-circle me-1"></i>Másolva a vágólapra!
+                            </small>
+                        }
+
+                        <div class="mt-4 pt-2 border-top">
+                            <a href="/track-order/@order.SecretToken" class="btn btn-dark rounded-pill w-100 fw-bold py-2">
+                                Megnyitás most
+                            </a>
+                        </div>
+                    </div>
+                </NotAuthorized>
+            </AuthorizeView>
+
+            <div class="mt-4 pt-3">
+                <a href="/" class="btn btn-outline-dark btn-lg rounded-pill px-5 fw-bold w-100">Vissza a főoldalra</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-danger rounded-4 py-5 shadow">
+            <i class="bi bi-exclamation-octagon fs-1 d-block mb-3"></i>
+            <h4 class="fw-bold">Rendelés nem található</h4>
+            <p>Sajnos nem találtuk a rendelésedet a rendszerben. Kérjük, vedd fel a kapcsolatot az ügyfélszolgálattal!</p>
+            <a href="/" class="btn btn-dark rounded-pill px-4 mt-3">Vissza a boltba</a>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string OrderNumber { get; set; } = "";
+    private Order? order;
+    private bool isCopied = false;
+    private bool isLoading = true;
+    private string TrackingUrl => order != null ? $"{Nav.BaseUri}track-order/{order.SecretToken}" : "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Prerendering alatt nem futtatjuk a Stripe ellenőrzést, mert a JS interop és a kért adatok még nem stabilak
+        // Csak akkor futunk le, ha már van interaktivitás (vagy ha nem prerenderelünk épp)
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var uri = Nav.ToAbsoluteUri(Nav.Uri);
+            var queryStrings = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+            if (queryStrings.TryGetValue("session_id", out var sessionId))
+            {
+                await ProcessStripePayment(sessionId!);
+            }
+            else
+            {
+                await LoadOrder();
+                isLoading = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task LoadOrder()
+    {
+        using var context = DbFactory.CreateDbContext();
+        order = await context.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.SecretToken == OrderNumber || o.Id.ToString() == OrderNumber);
+    }
+
+    private async Task ProcessStripePayment(string sessionId)
+    {
+        try
+        {
+            bool success = await StripeService.IsPaymentSuccessful(sessionId);
+
+            if (success)
+            {
+                using var context = DbFactory.CreateDbContext();
+
+                order = await context.Orders
+                    .Include(o => o.Items)
+                    .FirstOrDefaultAsync(o => o.SecretToken == OrderNumber || o.Id.ToString() == OrderNumber);
+
+                if (order != null && order.PaymentStatus != PaymentStatus.Fizetve)
+                {
+                    // 1. Állapot frissítése
+                    order.PaymentStatus = PaymentStatus.Fizetve;
+
+                    // 2. KUPON VÉGLEGESÍTÉS ÉS NAPLÓZÁS
+                    if (order.CouponID.HasValue)
+                    {
+                        var dbCoupon = await context.Coupons.FindAsync(order.CouponID.Value);
+                        if (dbCoupon != null)
+                        {
+                            dbCoupon.UsedCount++;
+
+                            var normalizedEmail = order.Email.Trim().ToLower();
+                            var alreadyLogged = await context.CouponUsages
+                                .AnyAsync(u => u.CouponId == dbCoupon.Id &&
+                                               (u.Email.ToLower() == normalizedEmail || (order.UserId != null && u.UserId == order.UserId)));
+
+                            if (!alreadyLogged)
+                            {
+                                context.CouponUsages.Add(new CouponUsage
+                                {
+                                    CouponId = dbCoupon.Id,
+                                    UserId = order.UserId,
+                                    Email = normalizedEmail,
+                                    UsedAt = DateTime.Now
+                                });
+                            }
+                        }
+                    }
+
+                    await context.SaveChangesAsync();
+
+                    // 3. Kosár ürítése
+                    await CartService.ClearAsync();
+                    await JS.InvokeVoidAsync("localStorage.removeItem", "cart");
+
+                    // 4. PDF és E-mail küldés
+                    await FinalizeOrder(order);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Stripe hiba: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task FinalizeOrder(Order order)
+    {
+        try
+        {
+            var pdfBytes = PdfService.GenerateOrderPdf(order);
+            var folderPath = Path.Combine(Environment.WebRootPath, "invoices");
+            if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+            var filePath = Path.Combine(folderPath, $"order_{order.Id}.pdf");
+            await File.WriteAllBytesAsync(filePath, pdfBytes);
+
+            var orderId = order.Id;
+
+            // Az e-mail küldést sorba állítjuk
+            EmailQueue.QueueEmail(async (token) =>
+            {
+                // Új scope-ot nyitunk a háttérszálnak, hogy minden szolgáltatás elérhető legyen
+                using var scope = ServiceProvider.CreateScope();
+                var emailSvc = scope.ServiceProvider.GetRequiredService<EmailService>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // Friss adatok lekérése az adatbázisból a háttérszálon
+                var orderData = await dbContext.Orders
+                    .Include(o => o.Items)
+                    .FirstOrDefaultAsync(o => o.Id == orderId);
+
+                if (orderData != null)
+                {
+                    await emailSvc.SendOrderConfirmationEmailAsync(orderData, filePath);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba a véglegesítéskor: {ex.Message}");
+        }
+    }
+
+    private async Task CopyTrackingUrl()
+    {
+        try
+        {
+            var jsCode = @"
+            (text) => {
+                var textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-9999px';
+                textArea.style.top = '0';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                } catch (err) {
+                    console.error('Másolási hiba:', err);
+                }
+                document.body.removeChild(textArea);
+            }";
+
+            await JS.InvokeVoidAsync("eval", $"({jsCode})('{TrackingUrl}')");
+
+            isCopied = true;
+            StateHasChanged();
+            await Task.Delay(3000);
+            isCopied = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Kritikus hiba: {ex.Message}");
+        }
+    }
+}

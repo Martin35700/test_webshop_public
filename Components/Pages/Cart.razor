@@ -1,0 +1,465 @@
+﻿@page "/cart"
+@using webshop.Models
+@using webshop.Services
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using System.Text.RegularExpressions
+@inject CartService CartService
+@inject SettingsService Settings
+@inject NavigationManager NavigationManager
+@inject StripeService StripeService
+@inject IDbContextFactory<AppDbContext> DbFactory
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Kosár - Modern Webshop</PageTitle>
+
+<div class="container py-5">
+    <div class="d-flex align-items-center mb-5">
+        <button class="btn btn-link text-dark p-0 me-3" @onclick='() => NavigationManager.NavigateTo("/")'>
+            <i class="bi bi-arrow-left fs-4"></i>
+        </button>
+        <h2 class="fw-bold m-0">Vásárlói kosár</h2>
+    </div>
+
+    @* --- KÉSZLET/LIMIT KORREKCIÓ FIGYELMEZTETÉS --- *@
+    @if (showStockWarning)
+    {
+        <div class="alert alert-info border-0 shadow-sm rounded-4 mb-4 animate__animated animate__headShake">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-info-circle-fill fs-4 me-3 text-info"></i>
+                <div>
+                    <strong>Tájékoztatás:</strong> A kosaradban lévő egyes termékek mennyiségét a készlethez vagy a maximális rendelési limithez igazítottuk.
+                </div>
+                <button type="button" class="btn-close ms-auto" @onclick="() => showStockWarning = false"></button>
+            </div>
+        </div>
+    }
+
+    @* --- STRIPE MEGSZAKÍTOTT FIZETÉS FIGYELMEZTETÉS --- *@
+    @if (pendingOrder != null)
+    {
+        <div class="alert alert-warning shadow-sm rounded-4 border-0 p-4 mb-4 animate__animated animate__fadeIn border-start border-5 border-warning">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-exclamation-triangle-fill fs-2 me-3 text-warning"></i>
+                <div class="flex-grow-1">
+                    <h5 class="fw-bold mb-1">Félbehagyott fizetés</h5>
+                    <p class="mb-2">
+                        Észleltük, hogy az előző rendelésed (<span class="badge bg-dark">#@pendingOrder.Id</span>) fizetése megszakadt.
+                        <span class="text-danger fw-bold">A kifizetetlen rendelések rövid időn belül automatikusan törlésre kerülnek és a készlet felszabadul.</span>
+                    </p>
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-warning fw-bold rounded-pill px-4 shadow-sm" @onclick="RetryPayment">
+                            <i class="bi bi-credit-card me-2"></i>Fizetés befejezése
+                        </button>
+                        <button class="btn btn-outline-danger rounded-pill px-3" @onclick="CancelAndRemoveOrder">
+                            <i class="bi bi-trash3 me-1"></i>Rendelés törlése
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (!CartService.Items.Any() && pendingOrder == null)
+    {
+        <div class="text-center py-5 shadow-sm rounded-4 bg-white border">
+            <div class="mb-4">
+                <i class="bi bi-cart-x text-muted" style="font-size: 5rem;"></i>
+            </div>
+            <h4 class="fw-bold">A kosarad üres</h4>
+            <p class="text-muted">Nézz körül a termékeink között és válogass kedvedre!</p>
+            <button class="btn btn-dark px-5 py-3 rounded-pill mt-3 fw-bold" @onclick='() => NavigationManager.NavigateTo("/shop")'>
+                Vissza a termékekhez
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="row g-4">
+            <div class="col-lg-8">
+                @if (!CartService.Items.Any() && pendingOrder != null)
+                {
+                    <div class="alert alert-info rounded-4 border-0 shadow-sm p-4">
+                        <i class="bi bi-info-circle me-2"></i>
+                        A kosarad jelenleg üres, mert a tételek a fenti függő rendelésben szerepelnek. A törlés után újra szerkesztheted a kosarad.
+                    </div>
+                }
+
+                @foreach (var item in CartService.Items)
+                {
+                    <div class="card mb-3 border-0 shadow-sm rounded-4 p-3 cart-item-card">
+                        <div class="row align-items-center g-3">
+                            <div class="col-md-2 col-4 text-center">
+                                @* Kattintható kép *@
+                                <a href="/product/@item.Product.Id/@GenerateSlug(item.Product.Name)">
+                                    <img src="@item.Product.ImageUrl" class="img-fluid rounded-3 bg-light p-2" style="max-height: 80px;" alt="@item.Product.Name">
+                                </a>
+                            </div>
+                            <div class="col-md-4 col-8">
+                                @* Kattintható név *@
+                                <a href="/product/@item.Product.Id/@GenerateSlug(item.Product.Name)" class="text-decoration-none text-dark">
+                                    <h6 class="fw-bold mb-1 hover-primary">@item.Product.Name</h6>
+                                </a>
+                                <p class="text-primary fw-bold mb-0">@item.Product.Price.ToString("N0") Ft</p>
+
+                                @* Készlet infó *@
+                                @if (item.Product.StrictStockControl)
+                                {
+                                    <small class="text-muted"><i class="bi bi-box-seam me-1"></i>Készleten: @item.Product.Stock db</small>
+                                }
+                                else if (item.Product.Stock <= 0)
+                                {
+                                    <small class="text-warning fw-bold" style="font-size: 0.75rem;"><i class="bi bi-clock me-1"></i>Beszerzés alatt</small>
+                                }
+
+                                @* Limit infó (ha van) *@
+                                @if (item.Product.MaxQuantityPerOrder.HasValue)
+                                {
+                                    <br />
+                                    <small class="text-warning fw-bold" style="font-size: 0.75rem;">
+                                        <i class="bi bi-exclamation-circle me-1"></i>Limit: @item.Product.MaxQuantityPerOrder db / rendelés
+                                    </small>
+                                }
+                            </div>
+                            <div class="col-md-3 col-6">
+                                <div class="d-flex align-items-center bg-light rounded-pill px-2 py-1" style="width: fit-content;">
+                                    <button class="btn btn-sm border-0" @onclick="() => ChangeQty(item, -1)">
+                                        <i class="bi bi-dash-lg"></i>
+                                    </button>
+
+                                    <input type="number"
+                                           class="form-control form-control-sm border-0 bg-transparent text-center fw-bold shadow-none"
+                                           style="width: 50px;"
+                                           value="@item.Quantity"
+                                           min="1"
+                                           max="@(GetMaxAllowed(item))"
+                                           @onchange="@((ChangeEventArgs e) => HandleInputChange(item, e.Value))" />
+
+                                    <button class="btn btn-sm border-0"
+                                            @onclick="() => ChangeQty(item, 1)"
+                                            disabled="@IsPlusDisabled(item)">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-2 col-4 text-end fw-bold">
+                                @((item.Product.Price * item.Quantity).ToString("N0")) Ft
+                            </div>
+                            <div class="col-md-1 col-2 text-end">
+                                <button class="btn btn-outline-danger btn-sm border-0 rounded-circle shadow-none" @onclick="() => RemoveItem(item.Product.Id)">
+                                    <i class="bi bi-trash3"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card border-0 shadow-sm rounded-4 p-4 sticky-top" style="top: 20px;">
+                    <h5 class="fw-bold mb-4">Rendelés összesítése</h5>
+
+                    <div class="alert @(HasBackorderItems ? "alert-warning" : "alert-secondary") border-0 small rounded-4 mb-4 transition-all">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="bi @(HasBackorderItems ? "bi-clock-history text-danger" : "bi-truck text-primary") me-2 fs-5"></i>
+                            <span>Várható szállítás: <strong>@CalculatedDeliveryTime</strong></span>
+                        </div>
+                        @if (HasBackorderItems)
+                        {
+                            <div class="text-muted small mt-1 border-top border-warning pt-2" style="font-size: 0.75rem;">
+                                <i class="bi bi-info-circle me-1"></i>Egy vagy több termék külső raktárról érkezik, ezért a szállítási idő hosszabb lehet.
+                            </div>
+                        }
+
+                        @if (CartService.TotalPrice < freeShippingLimit)
+                        {
+                            <div class="mt-3">
+                                <div class="d-flex justify-content-between mb-1 small">
+                                    <span>Ingyenes szállítás</span>
+                                    <span class="fw-bold">@((freeShippingLimit - CartService.TotalPrice).ToString("N0")) Ft hiányzik</span>
+                                </div>
+                                <div class="progress" style="height: 8px; background-color: rgba(0,0,0,0.1);">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                                         role="progressbar"
+                                         style="width: @(CalculateProgress().ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%">
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-success small fw-bold mt-2 animate__animated animate__pulse">
+                                <i class="bi bi-check-circle-fill me-1"></i> Gratulálunk! Elérte az ingyenes szállítást.
+                            </div>
+                        }
+                    </div>
+
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="text-muted">Részösszeg</span>
+                        <span>@CartService.TotalPrice.ToString("N0") Ft</span>
+                    </div>
+
+                    <div class="d-flex justify-content-between mb-4">
+                        <span class="text-muted">Szállítás</span>
+                        @if (CurrentShippingFee == 0)
+                        {
+                            <span class="text-success fw-bold">Ingyenes</span>
+                        }
+                        else
+                        {
+                            <span>@CurrentShippingFee.ToString("N0") Ft</span>
+                        }
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex justify-content-between mb-4 h4 fw-bold">
+                        <span>Fizetendő</span>
+                        <span class="text-primary">@((CartService.TotalPrice + CurrentShippingFee).ToString("N0")) Ft</span>
+                    </div>
+
+                    <button class="btn btn-dark w-100 py-3 rounded-pill fw-bold shadow-sm"
+                            disabled="@(!CartService.Items.Any())"
+                            @onclick='() => NavigationManager.NavigateTo("/checkout")'>
+                        Tovább a pénztárhoz
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .cart-item-card {
+        transition: transform 0.2s ease;
+    }
+
+    .hover-primary:hover {
+        color: #0d6efd !important;
+    }
+</style>
+
+@code {
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "canceled_order_token")]
+    public string? CanceledOrderToken { get; set; }
+
+    private Order? pendingOrder;
+
+    private decimal freeShippingLimit;
+    private decimal baseShippingFee;
+    private string deliveryTime = "";
+    private string backorderDeliveryTime = "";
+
+    private bool showStockWarning = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Settings.LoadSettingsAsync();
+        freeShippingLimit = Settings.GetDecimal("FreeShippingLimit", 20000);
+        baseShippingFee = Settings.GetDecimal("ShippingFee", 1990);
+        deliveryTime = Settings.GetString("DeliveryTime", "2-4 munkanap");
+        backorderDeliveryTime = Settings.GetString("BackorderDeliveryTime", "5-10 munkanap");
+
+        await ValidateStockOnLoadAsync();
+
+        CartService.OnChange += HandleCartChange;
+    }
+
+    private bool HasBackorderItems => CartService.Items.Any(i => i.Quantity > i.Product.Stock);
+
+    private string CalculatedDeliveryTime => HasBackorderItems ? backorderDeliveryTime : deliveryTime;
+
+    private async Task ValidateStockOnLoadAsync()
+    {
+        bool corrected = false;
+        foreach (var item in CartService.Items.ToList())
+        {
+            int maxAllowed = GetMaxAllowed(item);
+
+            if (item.Quantity > maxAllowed)
+            {
+                if (maxAllowed <= 0)
+                {
+                    await CartService.RemoveItemAsync(item.Product.Id);
+                }
+                else
+                {
+                    await CartService.UpdateQuantityAsync(item.Product.Id, maxAllowed);
+                }
+                corrected = true;
+            }
+        }
+        if (corrected) showStockWarning = true;
+    }
+
+    private int GetMaxAllowed(CartItem item)
+    {
+        int limit = 99;
+
+        if (item.Product.StrictStockControl)
+        {
+            limit = item.Product.Stock;
+        }
+
+        if (item.Product.MaxQuantityPerOrder.HasValue && item.Product.MaxQuantityPerOrder.Value > 0)
+        {
+            limit = Math.Min(limit, item.Product.MaxQuantityPerOrder.Value);
+        }
+
+        return limit;
+    }
+
+    private bool IsPlusDisabled(CartItem item)
+    {
+        return item.Quantity >= GetMaxAllowed(item);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(CanceledOrderToken))
+        {
+            using var context = DbFactory.CreateDbContext();
+            pendingOrder = await context.Orders
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.SecretToken == CanceledOrderToken &&
+                                     o.PaymentStatus == PaymentStatus.Fizetendő);
+
+            StateHasChanged();
+        }
+    }
+
+    private async Task RetryPayment()
+    {
+        if (pendingOrder == null) return;
+        try
+        {
+            var stripeUrl = await StripeService.CreateCheckoutSessionAsync(pendingOrder, NavigationManager.BaseUri);
+            NavigationManager.NavigateTo(stripeUrl);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba az újrapróbálkozás során: {ex.Message}");
+        }
+    }
+
+    private async Task CancelAndRemoveOrder()
+    {
+        if (pendingOrder == null) return;
+
+        try
+        {
+            using var context = DbFactory.CreateDbContext();
+            var orderToDelete = await context.Orders
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.Id == pendingOrder.Id);
+
+            if (orderToDelete != null)
+            {
+                foreach (var item in orderToDelete.Items)
+                {
+                    var product = await context.Products.FindAsync(item.ProductId);
+                    if (product != null)
+                    {
+                        product.Stock += item.Quantity;
+                        context.StockLogs.Add(new StockLog
+                        {
+                            ProductId = product.Id,
+                            ChangeAmount = item.Quantity,
+                            ResultStock = product.Stock,
+                            Reason = $"Rendelés törölve (#{orderToDelete.Id}) - Készlet visszatöltve",
+                            Date = DateTime.Now
+                        });
+                    }
+                }
+
+                context.Orders.Remove(orderToDelete);
+                await context.SaveChangesAsync();
+            }
+
+            pendingOrder = null;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba a rendelés törlésekor: {ex.Message}");
+        }
+    }
+
+    private string GenerateSlug(string name)
+    {
+        string slug = name.ToLower();
+        slug = Regex.Replace(slug, @"[áàäâ]", "a");
+        slug = Regex.Replace(slug, @"[éèëê]", "e");
+        slug = Regex.Replace(slug, @"[íìïî]", "i");
+        slug = Regex.Replace(slug, @"[óòöőô]", "o");
+        slug = Regex.Replace(slug, @"[úùüűû]", "u");
+        slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
+        slug = Regex.Replace(slug, @"\s+", "-").Trim('-');
+        return slug;
+    }
+
+    private decimal CurrentShippingFee => CartService.TotalPrice >= freeShippingLimit ? 0 : baseShippingFee;
+
+    private double CalculateProgress()
+    {
+        if (freeShippingLimit <= 0) return 100;
+        double currentTotal = (double)CartService.TotalPrice;
+        double limit = (double)freeShippingLimit;
+        return Math.Min(100, (currentTotal / limit) * 100.0);
+    }
+
+    private void HandleCartChange() => InvokeAsync(StateHasChanged);
+
+    private async Task ChangeQty(CartItem item, int delta)
+    {
+        int newQty = item.Quantity + delta;
+        int maxAllowed = GetMaxAllowed(item);
+
+        if (newQty > maxAllowed)
+        {
+            newQty = maxAllowed;
+        }
+
+        if (newQty > 0)
+        {
+            await CartService.UpdateQuantityAsync(item.Product.Id, newQty);
+        }
+        else
+        {
+            await CartService.RemoveItemAsync(item.Product.Id);
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task HandleInputChange(CartItem item, object? value)
+    {
+        if (int.TryParse(value?.ToString(), out int newQty))
+        {
+            if (newQty < 1) newQty = 1;
+
+            int maxAllowed = GetMaxAllowed(item);
+
+            if (newQty > maxAllowed)
+            {
+                newQty = maxAllowed;
+            }
+
+            await CartService.UpdateQuantityAsync(item.Product.Id, newQty);
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveItem(int productId)
+    {
+        await CartService.RemoveItemAsync(productId);
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        CartService.OnChange -= HandleCartChange;
+    }
+}

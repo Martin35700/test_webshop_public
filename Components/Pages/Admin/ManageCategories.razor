@@ -1,0 +1,272 @@
+﻿@page "/admin/categories"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using webshop.Data
+@using webshop.Models
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold">Kategóriák kezelése</h2>
+        <div class="d-flex gap-2">
+            <input @bind="newCategoryName" class="form-control rounded-pill" placeholder="Új kategória neve..." />
+            <button class="btn btn-primary rounded-pill px-4" @onclick="AddCategory">Hozzáadás</button>
+        </div>
+    </div>
+
+    @* --- SZŰRŐ PANEL --- *@
+    <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-light">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-0"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control border-0 shadow-none" placeholder="Keresés név alapján..." @bind="searchTerm" @bind:event="oninput" />
+                </div>
+            </div>
+            <div class="col-md-4">
+                <select class="form-select border-0 shadow-none" @bind="filterActiveStatus">
+                    <option value="all">Összes állapot</option>
+                    <option value="active">Csak aktív</option>
+                    <option value="inactive">Csak inaktív</option>
+                </select>
+            </div>
+            <div class="col-md-2 text-end">
+                <button class="btn btn-outline-secondary btn-sm rounded-pill" @onclick="ClearFilters">Alaphelyzet</button>
+            </div>
+        </div>
+    </div>
+
+    @if (categories == null)
+    {
+        <div class="spinner-border text-primary"></div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <table class="table align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="ps-4">Név</th>
+                        <th class="text-center">Állapot</th>
+                        <th class="text-center">Termékek száma</th>
+                        <th class="text-end pe-4">Műveletek</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var cat in FilteredCategories)
+                    {
+                        <tr class="@(cat.IsActive ? "" : "text-muted opacity-75 bg-light")">
+                            <td class="ps-4">
+                                @if (editingId == cat.Id)
+                                {
+                                    <input @bind="cat.Name" class="form-control form-control-sm" />
+                                }
+                                else
+                                {
+                                    <span class="@(cat.IsActive ? "fw-bold" : "")">@cat.Name</span>
+                                }
+                            </td>
+                            <td class="text-center">
+                                <span class="badge rounded-pill @(cat.IsActive ? "bg-success" : "bg-danger")">
+                                    @(cat.IsActive ? "Aktív" : "Inaktív")
+                                </span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge bg-secondary rounded-pill">@cat.Products?.Count</span>
+                            </td>
+                            <td class="text-end pe-4">
+                                @if (editingId == cat.Id)
+                                {
+                                    <button class="btn btn-sm btn-success me-2" @onclick="() => SaveEdit(cat)">Mentés</button>
+                                    <button class="btn btn-sm btn-light" @onclick="() => editingId = 0">Mégse</button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-dark me-2" @onclick="() => editingId = cat.Id">Szerkesztés</button>
+                                    @if (cat.Name != "Egyéb")
+                                    {
+                                        @if (cat.IsActive)
+                                        {
+                                            <button class="btn btn-sm btn-outline-danger" @onclick="() => CheckAndShowDeleteModal(cat)">Deaktiválás</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => ToggleStatus(cat)">Visszaállítás</button>
+                                        }
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@* --- Deaktiválási (Soft Delete) Modal --- *@
+@if (showDeleteModal && categoryToDelete != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow rounded-4">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title fw-bold">Kategória deaktiválása: @categoryToDelete.Name</h5>
+                    <button type="button" class="btn-close" @onclick="() => showDeleteModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    @if (categoryToDelete.Products != null && categoryToDelete.Products.Any())
+                    {
+                        <p class="text-danger">Ez a kategória <strong>@categoryToDelete.Products.Count</strong> terméket tartalmaz.</p>
+                        <p>Mit szeretnél tenni a termékekkel?</p>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-primary" @onclick="() => ProcessDeactivate(false)">
+                                <i class="bi bi-arrow-right-circle me-2"></i>Áthelyezés az "Egyéb" kategóriába
+                            </button>
+                            <button class="btn btn-outline-danger" @onclick="() => ProcessDeactivate(true)">
+                                <i class="bi bi-eye-slash me-2"></i>Termékek inaktívvá tétele
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <p>Biztosan deaktiválni szeretnéd ezt az üres kategóriát?</p>
+                    }
+                </div>
+                <div class="modal-footer border-0">
+                    <button class="btn btn-light rounded-pill" @onclick="() => showDeleteModal = false">Mégse</button>
+                    @if (categoryToDelete.Products == null || !categoryToDelete.Products.Any())
+                    {
+                        <button class="btn btn-danger rounded-pill" @onclick="() => ProcessDeactivate(false)">Deaktiválás</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Category>? categories;
+    private string newCategoryName = "";
+    private int editingId = 0;
+
+    // Szűrés
+    private string searchTerm = "";
+    private string filterActiveStatus = "all";
+
+    // Modal vezérlés
+    private bool showDeleteModal = false;
+    private Category? categoryToDelete;
+
+    protected override async Task OnInitializedAsync() => await LoadCategories();
+
+    private async Task LoadCategories()
+    {
+        using var context = DbFactory.CreateDbContext();
+        categories = await context.Categories.Include(c => c.Products).ToListAsync();
+    }
+
+    private IEnumerable<Category> FilteredCategories
+    {
+        get
+        {
+            if (categories == null) return Enumerable.Empty<Category>();
+            var query = categories.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+                query = query.Where(c => c.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+            if (filterActiveStatus == "active") query = query.Where(c => c.IsActive);
+            else if (filterActiveStatus == "inactive") query = query.Where(c => !c.IsActive);
+
+            return query;
+        }
+    }
+
+    private void ClearFilters() { searchTerm = ""; filterActiveStatus = "all"; }
+
+    private async Task AddCategory()
+    {
+        if (string.IsNullOrWhiteSpace(newCategoryName)) return;
+        using var context = DbFactory.CreateDbContext();
+        context.Categories.Add(new Category { Name = newCategoryName, IsActive = true });
+        await context.SaveChangesAsync();
+        newCategoryName = "";
+        await LoadCategories();
+    }
+
+    private async Task SaveEdit(Category cat)
+    {
+        using var context = DbFactory.CreateDbContext();
+        context.Categories.Update(cat);
+        await context.SaveChangesAsync();
+        editingId = 0;
+        await LoadCategories();
+    }
+
+    private void CheckAndShowDeleteModal(Category cat)
+    {
+        categoryToDelete = cat;
+        showDeleteModal = true;
+    }
+
+    private async Task ToggleStatus(Category cat)
+    {
+        using var context = DbFactory.CreateDbContext();
+        var dbCat = await context.Categories.FindAsync(cat.Id);
+        if (dbCat != null)
+        {
+            dbCat.IsActive = !dbCat.IsActive;
+            await context.SaveChangesAsync();
+            await LoadCategories();
+        }
+    }
+
+    private async Task ProcessDeactivate(bool deactivateProducts)
+    {
+        if (categoryToDelete == null) return;
+
+        using var context = DbFactory.CreateDbContext();
+        var cat = await context.Categories
+            .Include(c => c.Products)
+            .FirstOrDefaultAsync(c => c.Id == categoryToDelete.Id);
+
+        if (cat != null)
+        {
+            if (deactivateProducts)
+            {
+                // Opció 1: Termékek inaktívvá tétele
+                foreach (var product in cat.Products)
+                {
+                    product.IsActive = false;
+                }
+            }
+            else
+            {
+                // Opció 2: Áthelyezés "Egyéb" kategóriába
+                var otherCat = await context.Categories.FirstOrDefaultAsync(c => c.Name == "Egyéb");
+                if (otherCat == null)
+                {
+                    otherCat = new Category { Name = "Egyéb", IsActive = true };
+                    context.Categories.Add(otherCat);
+                    await context.SaveChangesAsync();
+                }
+
+                foreach (var product in cat.Products)
+                {
+                    product.CategoryId = otherCat.Id;
+                }
+            }
+
+            // A kategória deaktiválása (Soft Delete)
+            cat.IsActive = false;
+            await context.SaveChangesAsync();
+        }
+
+        showDeleteModal = false;
+        categoryToDelete = null;
+        await LoadCategories();
+    }
+}

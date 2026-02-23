@@ -1,0 +1,657 @@
+﻿@page "/admin/products"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.AspNetCore.Components.Forms
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IWebHostEnvironment Environment
+
+<PageTitle>Termékek és Beszerzés</PageTitle>
+
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold">Termékkezelő</h2>
+        <button class="btn btn-primary rounded-pill px-4" @onclick="PrepareNewProduct">
+            <i class="bi bi-plus-lg me-2"></i> Új termék
+        </button>
+    </div>
+
+    @* --- BESZERZÉSI SEGÉD (Csak Feldolgozatlan rendelésekre) --- *@
+    @if (stockRequirements != null && stockRequirements.Any())
+    {
+        <div class="alert alert-warning border-0 shadow-sm rounded-4 mb-4 animate__animated animate__fadeIn">
+            <div class="d-flex align-items-center mb-2">
+                <i class="bi bi-box-seam-fill fs-4 text-warning me-3"></i>
+                <h5 class="fw-bold m-0">Beszerzés szükséges (Új rendelésekhez)</h5>
+            </div>
+            <p class="small text-muted mb-3">Az alábbi termékekből nincs elegendő készlet a még <strong>feldolgozatlan</strong> rendelések elindításához:</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-borderless mb-0">
+                    <thead>
+                        <tr class="small text-uppercase text-muted" style="font-size: 0.7rem;">
+                            <th>Terméknév</th>
+                            <th class="text-center">Aktuális Raktáron</th>
+                            <th class="text-center">Új igény</th>
+                            <th class="text-center text-danger">Beszerzendő</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var req in stockRequirements)
+                        {
+                            <tr class="align-middle">
+                                <td><span class="fw-bold">@req.ProductName</span></td>
+                                <td class="text-center">@req.CurrentStock db</td>
+                                <td class="text-center">@req.TotalOrdered db</td>
+                                <td class="text-center">
+                                    <span class="badge bg-danger rounded-pill px-3">@req.MissingAmount db</span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    @if (products == null)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary"></div>
+        </div>
+    }
+    else
+    {
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="ps-4">Kép</th>
+                        <th>Név</th>
+                        <th>Ár</th>
+                        <th>Készlet</th>
+                        <th>Mód</th>
+                        <th>Állapot</th>
+                        <th class="text-end pe-4">Műveletek</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var product in products)
+                    {
+                        <tr class="@(product.IsActive ? "" : "table-light text-muted")">
+                            <td class="ps-4">
+                                <img src="@product.ImageUrl" class="rounded-3" style="width: 50px; height: 50px; object-fit: cover; opacity: @(product.IsActive ? "1" : "0.5");" />
+                            </td>
+                            <td><div class="fw-bold">@product.Name</div></td>
+                            <td>@product.Price.ToString("N0") Ft</td>
+                            <td>
+                                @* DINAMIKUS SZÍN: Ha a készlet a küszöbérték alatt van, piros *@
+                                <span class="badge @(product.Stock > product.LowStockThreshold ? "bg-success" : "bg-danger")">
+                                    @product.Stock db
+                                </span>
+
+                                @if (product.Stock <= product.LowStockThreshold)
+                                {
+                                    <br />
+                                    <small class="text-danger fw-bold" style="font-size: 0.65rem;">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>Kritikus szint
+                                    </small>
+                                }
+
+                                @if (product.MaxQuantityPerOrder.HasValue)
+                                {
+                                    <br />
+                                    <small class="text-muted" style="font-size: 0.65rem;">Max: @product.MaxQuantityPerOrder</small>
+                                }
+                            </td>
+                            <td>
+                                <small class="text-muted" style="font-size: 0.75rem;">
+                                    @(product.StrictStockControl ? "🔒 Szigorú" : "🔓 Rendelhető")
+                                </small>
+                            </td>
+                            <td>
+                                <span class="badge @(product.IsActive ? "bg-info text-dark" : "bg-warning text-dark")">
+                                    @(product.IsActive ? "Aktív" : "Inaktív")
+                                </span>
+                            </td>
+                            <td class="text-end pe-4">
+                                @* KONTRASZTOS MŰVELETI GOMBOK *@
+                                <button class="btn btn-sm btn-success me-2 rounded-pill px-3 fw-bold" @onclick="() => PrepareStockUp(product)">
+                                    <i class="bi bi-plus-circle me-1"></i>Készlet +
+                                </button>
+                                <button class="btn btn-sm btn-outline-dark me-2 rounded-pill px-3" @onclick="() => EditProduct(product)">Szerkeszt</button>
+                                <button class="btn btn-sm btn-outline-danger rounded-pill px-3" @onclick="() => DeleteProduct(product.Id)">Deaktiválás</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@* --- KÉSZLET VÉTELEZÉS (STOCK UP) MODAL --- *@
+@if (stockUpEntry != null && stockUpProduct != null)
+{
+    <div class="modal d-block" style="background: rgba(0,0,0,0.7); z-index: 1060;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="fw-bold m-0">Készlet rögzítése: @stockUpProduct.Name</h5>
+                    <button type="button" class="btn-close" @onclick="() => stockUpEntry = null"></button>
+                </div>
+                <EditForm Model="stockUpEntry" OnValidSubmit="SaveStockUp">
+                    <DataAnnotationsValidator />
+                    <div class="modal-body p-4">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Mennyiség (db)</label>
+                                <InputNumber @bind-Value="stockUpEntry.Quantity" class="form-control form-control-lg rounded-3" min="1" />
+                                <ValidationMessage For="@(() => stockUpEntry.Quantity)" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Egységár (Ft/db)</label>
+                                <InputNumber @bind-Value="stockUpEntry.UnitCost" class="form-control form-control-lg rounded-3" min="0" />
+                                <ValidationMessage For="@(() => stockUpEntry.UnitCost)" />
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Megjegyzés</label>
+                                <InputText @bind-Value="stockUpEntry.Note" class="form-control rounded-3" placeholder="Beszállító, számlaszám..." />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0">
+                        <button type="button" class="btn btn-light rounded-pill px-4" @onclick="() => stockUpEntry = null">Mégse</button>
+                        <button type="submit" class="btn btn-success rounded-pill px-5 fw-bold shadow-sm">Készlet Mentése</button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@if (editingProduct != null)
+{
+    <div class="modal d-block" style="background: rgba(0,0,0,0.7); z-index: 1050;">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <EditForm Model="editingProduct" OnValidSubmit="SaveProduct">
+                    <DataAnnotationsValidator />
+                    <div class="modal-header border-0">
+                        <h5 class="fw-bold m-0">@(editingProduct.Id == 0 ? "Új termék felvitele" : "Termék szerkesztése")</h5>
+                        <button type="button" class="btn-close" @onclick="() => editingProduct = null"></button>
+                    </div>
+                    <div class="modal-body p-4 pt-0">
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="fw-bold small text-muted">Név</label>
+                                <InputText @bind-Value="editingProduct.Name" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="fw-bold small text-muted">Kategória</label>
+                                <InputSelect @bind-Value="editingProduct.CategoryId" class="form-select rounded-3">
+                                    <option value="0">Válassz...</option>
+                                    @if (availableCategories != null)
+                                    {
+                                        @foreach (var cat in availableCategories)
+                                        {
+                                            <option value="@cat.Id">@cat.Name</option>
+                                        }
+                                    }
+                                </InputSelect>
+                            </div>
+
+                            @* --- ÁR, KÉSZLET és MAX LIMIT EGY SORBAN --- *@
+                            <div class="col-md-3">
+                                <label class="fw-bold small text-muted">Ár (Ft)</label>
+                                <InputNumber @bind-Value="editingProduct.Price" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="fw-bold small text-muted">Aktuális készlet (db)</label>
+                                <InputNumber @bind-Value="editingProduct.Stock" class="form-control rounded-3" />
+                            </div>
+
+                            @* ÚJ MEZŐ: KRITIKUS KÜSZÖBÉRTÉK *@
+                            <div class="col-md-3">
+                                <label class="fw-bold small text-muted">Kritikus szint (db)</label>
+                                <InputNumber @bind-Value="editingProduct.LowStockThreshold" class="form-control rounded-3" min="0" />
+                                <div class="form-text" style="font-size: 0.65rem;">Értesítés ezen szint alatt.</div>
+                            </div>
+
+                            @* ÚJ MEZŐ: MAX QUANTITY *@
+                            <div class="col-md-3">
+                                <label class="fw-bold small text-muted">Max. db / rendelés</label>
+                                <InputNumber @bind-Value="editingProduct.MaxQuantityPerOrder" class="form-control rounded-3" placeholder="Nincs limit" min="1" />
+                                <div class="form-text" style="font-size: 0.7rem; margin-top: 2px;">Ha üres, nincs korlát.</div>
+                            </div>
+
+                            <div class="col-12 d-flex gap-4 bg-light p-3 rounded-3 mt-3">
+                                <div class="form-check form-switch">
+                                    <InputCheckbox @bind-Value="editingProduct.IsActive" class="form-check-input" id="isActive" />
+                                    <label class="form-check-label fw-bold small ms-2" for="isActive">Termék aktív</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <InputCheckbox @bind-Value="editingProduct.StrictStockControl" class="form-check-input" id="strictStock" />
+                                    <label class="form-check-label fw-bold small ms-2" for="strictStock">
+                                        Szigorú készletkezelés (Nincs túlértékesítés)
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="col-md-12">
+                                <label class="fw-bold small text-muted">Rövid leírás</label>
+                                <InputText @bind-Value="editingProduct.ShortDescription" class="form-control rounded-3" />
+                            </div>
+                            <div class="col-12">
+                                <label class="fw-bold small text-muted">Hosszú leírás</label>
+                                <InputTextArea @bind-Value="editingProduct.LongDescription" class="form-control rounded-3" rows="3" />
+                            </div>
+
+                            @* --- KÉPEK KEZELÉSE SZEKCIÓ --- *@
+                            <div class="col-12">
+                                <div class="p-3 border rounded-3 bg-light">
+                                    <label class="fw-bold d-block mb-3 text-uppercase small text-muted">Képek kezelése</label>
+                                    <div class="row g-3">
+                                        @* FŐ KÉP *@
+                                        <div class="col-md-4 text-center border-end">
+                                            <label class="fw-bold small d-block mb-2">Elsődleges kép</label>
+                                            <div class="position-relative mb-2" style="height: 120px;">
+                                                <img src="@editingProduct.ImageUrl" style="max-height: 100%; max-width: 100%; object-fit: contain;" class="rounded shadow-sm" />
+                                            </div>
+                                            <InputFile OnChange="UploadMainImage" class="form-control form-control-sm" />
+                                        </div>
+
+                                        @* GALÉRIA *@
+                                        <div class="col-md-8">
+                                            <label class="fw-bold small d-block mb-2">További képek (Galéria)</label>
+                                            <div class="d-flex gap-2 overflow-auto py-2 mb-2" style="min-height: 100px; scrollbar-width: thin;">
+                                                @* Újonnan kiválasztott, még nem mentett fájlok *@
+                                                @foreach (var gFile in galleryFilesToUpload)
+                                                {
+                                                    <div class="position-relative bg-white border rounded d-flex align-items-center justify-content-center shadow-sm" style="width: 80px; height: 80px; flex-shrink: 0;">
+                                                        <span class="badge bg-primary position-absolute top-0 start-0 m-1" style="font-size: 0.5rem;">ÚJ</span>
+                                                        <i class="bi bi-file-earmark-image fs-2 text-muted"></i>
+                                                    </div>
+                                                }
+                                                @* Már adatbázisban lévő képek *@
+                                                @if (editingProduct.GalleryImages != null)
+                                                {
+                                                    @foreach (var gImg in editingProduct.GalleryImages)
+                                                    {
+                                                        <div class="position-relative shadow-sm" style="width: 80px; height: 80px; flex-shrink: 0;">
+                                                            <img src="@gImg.ImageUrl" class="rounded border w-100 h-100" style="object-fit: cover;" />
+                                                            <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 p-0 d-flex align-items-center justify-content-center"
+                                                                    style="width: 20px; height: 20px; border-radius: 50%; margin: -5px;" @onclick="() => RemoveGalleryImage(gImg)">
+                                                                <i class="bi bi-x"></i>
+                                                            </button>
+                                                        </div>
+                                                    }
+                                                }
+                                            </div>
+                                            <InputFile OnChange="HandleGallerySelection" class="form-control form-control-sm" Multiple />
+                                            <small class="text-muted" style="font-size: 0.7rem;">Több fájl is kijelölhető egyszerre.</small>
+                                        </div>
+                                    </div>
+                                    @if (isUploading)
+                                    {
+                                        <div class="text-primary small mt-2 d-flex align-items-center">
+                                            <span class="spinner-border spinner-border-sm me-2"></span> Feldolgozás...
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0">
+                        <button type="button" class="btn btn-light rounded-pill px-4" @onclick="() => editingProduct = null">Mégse</button>
+                        <button type="submit" class="btn btn-primary rounded-pill px-5" disabled="@isUploading">Mentés</button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Product>? products;
+    private List<Category>? availableCategories;
+    private List<StockRequirement> stockRequirements = new();
+    private Product? editingProduct;
+    private bool isUploading = false;
+
+    // --- ÚJ: KÉSZLET VÉTELEZÉSHEZ SZÜKSÉGES VÁLTOZÓK ---
+    private StockEntry? stockUpEntry;
+    private Product? stockUpProduct;
+
+    // Galéria feltöltéséhez szükséges segédlisták
+    private List<IBrowserFile> galleryFilesToUpload = new();
+    private List<int> galleryImagesToDelete = new();
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        using var context = DbFactory.CreateDbContext();
+        products = await context.Products.Include(p => p.Category).ToListAsync();
+        availableCategories = await context.Categories.ToListAsync();
+        await LoadStockRequirements();
+    }
+
+    private async Task LoadStockRequirements()
+    {
+        using var context = DbFactory.CreateDbContext();
+        var shortageProducts = await context.Products.Where(p => p.Stock < 0).ToListAsync();
+
+        stockRequirements = shortageProducts.Select(p => new StockRequirement
+        {
+            ProductName = p.Name,
+            CurrentStock = 0,
+            TotalOrdered = Math.Abs(p.Stock),
+            MissingAmount = Math.Abs(p.Stock)
+        }).ToList();
+    }
+
+    // --- ÚJ: KÉSZLET VÉTELEZÉS METÓDUSOK ---
+
+    private void PrepareStockUp(Product product)
+    {
+        stockUpProduct = product;
+        stockUpEntry = new StockEntry
+        {
+            ProductId = product.Id,
+            Quantity = 1,
+            UnitCost = 0,
+            Date = DateTime.Now
+        };
+    }
+
+    private async Task SaveStockUp()
+    {
+        if (stockUpEntry == null || stockUpProduct == null)
+        {
+            return;
+        }
+
+        using var context = DbFactory.CreateDbContext();
+
+        // 1. Rögzítjük a beszerzési bejegyzést (profit számításhoz)
+        context.StockEntries.Add(stockUpEntry);
+
+        // 2. Frissítjük a termék készletét
+        var dbProduct = await context.Products.FindAsync(stockUpProduct.Id);
+        if (dbProduct != null)
+        {
+            dbProduct.Stock += stockUpEntry.Quantity;
+
+            // Ha a készlet a küszöb fölé ment, reseteljük a riasztást a BackgroundService számára
+            if (dbProduct.Stock > dbProduct.LowStockThreshold)
+            {
+                dbProduct.IsLowStockAlertSent = false;
+            }
+
+            // 3. Naplózzuk a készletmozgást a meglévő log rendszerben
+            context.StockLogs.Add(new StockLog
+            {
+                ProductId = dbProduct.Id,
+                ChangeAmount = stockUpEntry.Quantity,
+                ResultStock = dbProduct.Stock,
+                Reason = $"Beszerzés rögzítve: {stockUpEntry.Note ?? "Admin rögzítés"} (Ár: {stockUpEntry.UnitCost:N0} Ft/db)",
+                Date = DateTime.Now
+            });
+
+            context.Products.Update(dbProduct);
+        }
+
+        await context.SaveChangesAsync();
+
+        stockUpEntry = null;
+        stockUpProduct = null;
+
+        await LoadData(); // Lista és beszerzési segéd frissítése
+    }
+
+    private void PrepareNewProduct()
+    {
+        galleryFilesToUpload.Clear();
+        galleryImagesToDelete.Clear();
+        editingProduct = new Product
+        {
+            CategoryId = availableCategories?.FirstOrDefault()?.Id ?? 0,
+            ImageUrl = "/images/placeholder.png",
+            IsActive = true,
+            Stock = 0,
+            LowStockThreshold = 5,
+            MaxQuantityPerOrder = null,
+            StrictStockControl = false,
+            GalleryImages = new List<ProductImage>()
+        };
+    }
+
+    private async Task EditProduct(Product product)
+    {
+        galleryFilesToUpload.Clear();
+        galleryImagesToDelete.Clear();
+
+        using var context = DbFactory.CreateDbContext();
+
+        editingProduct = await context.Products
+            .Include(p => p.GalleryImages)
+            .FirstOrDefaultAsync(p => p.Id == product.Id);
+
+        if (editingProduct != null)
+        {
+            editingProduct = new Product
+            {
+                Id = editingProduct.Id,
+                Name = editingProduct.Name,
+                Price = editingProduct.Price,
+                CategoryId = editingProduct.CategoryId,
+                ShortDescription = editingProduct.ShortDescription,
+                LongDescription = editingProduct.LongDescription,
+                ImageUrl = editingProduct.ImageUrl,
+                Stock = editingProduct.Stock,
+                LowStockThreshold = editingProduct.LowStockThreshold,
+                MaxQuantityPerOrder = editingProduct.MaxQuantityPerOrder,
+                StrictStockControl = editingProduct.StrictStockControl,
+                IsActive = editingProduct.IsActive,
+                IsLowStockAlertSent = editingProduct.IsLowStockAlertSent,
+                GalleryImages = editingProduct.GalleryImages.ToList()
+            };
+        }
+    }
+
+    private async Task UploadMainImage(InputFileChangeEventArgs e)
+    {
+        isUploading = true;
+        try
+        {
+            var file = e.File;
+            if (file != null)
+            {
+                var fileName = await SaveFileToDisk(file);
+                editingProduct!.ImageUrl = $"/uploads/{fileName}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Fő kép hiba: {ex.Message}");
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleGallerySelection(InputFileChangeEventArgs e)
+    {
+        isUploading = true;
+        try
+        {
+            foreach (var file in e.GetMultipleFiles())
+            {
+                var fileName = await SaveFileToDisk(file);
+
+                editingProduct!.GalleryImages.Add(new ProductImage
+                {
+                    ImageUrl = $"/uploads/{fileName}"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Galéria feltöltés hiba: {ex.Message}");
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void RemoveGalleryImage(ProductImage img)
+    {
+        editingProduct?.GalleryImages.Remove(img);
+        if (img.Id != 0)
+        {
+            galleryImagesToDelete.Add(img.Id);
+        }
+    }
+
+    private async Task<string> SaveFileToDisk(IBrowserFile file)
+    {
+        var folderPath = Path.Combine(Environment.WebRootPath, "uploads");
+        if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
+
+        var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.Name)}";
+        var path = Path.Combine(folderPath, fileName);
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 1024 * 1024 * 10);
+        await using var fs = new FileStream(path, FileMode.Create);
+        await stream.CopyToAsync(fs);
+
+        return fileName;
+    }
+
+    private async Task SaveProduct()
+    {
+        if (editingProduct == null || editingProduct.CategoryId == 0)
+        {
+            return;
+        }
+
+        isUploading = true;
+        using var context = DbFactory.CreateDbContext();
+
+        try
+        {
+            foreach (var imageId in galleryImagesToDelete)
+            {
+                var imgRecord = await context.ProductImages.FindAsync(imageId);
+                if (imgRecord != null)
+                {
+                    context.ProductImages.Remove(imgRecord);
+                }
+            }
+
+            if (editingProduct.Id == 0)
+            {
+                context.Products.Add(editingProduct);
+                await context.SaveChangesAsync();
+
+                context.StockLogs.Add(new StockLog
+                {
+                    ProductId = editingProduct.Id,
+                    ChangeAmount = editingProduct.Stock,
+                    ResultStock = editingProduct.Stock,
+                    Reason = "Termék létrehozása (Kezdeti készlet)",
+                    Date = DateTime.Now
+                });
+            }
+            else
+            {
+                var originalProduct = await context.Products
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == editingProduct.Id);
+
+                if (originalProduct != null && originalProduct.Stock != editingProduct.Stock)
+                {
+                    int diff = editingProduct.Stock - originalProduct.Stock;
+                    context.StockLogs.Add(new StockLog
+                    {
+                        ProductId = editingProduct.Id,
+                        ChangeAmount = diff,
+                        ResultStock = editingProduct.Stock,
+                        Reason = "Admin manuális módosítás",
+                        Date = DateTime.Now
+                    });
+
+                    if (editingProduct.Stock > editingProduct.LowStockThreshold)
+                    {
+                        editingProduct.IsLowStockAlertSent = false;
+                    }
+                }
+
+                context.Products.Update(editingProduct);
+            }
+
+            await context.SaveChangesAsync();
+
+            editingProduct = null;
+            galleryImagesToDelete.Clear();
+            galleryFilesToUpload.Clear();
+
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Hiba a termék mentésekor: {ex.Message}");
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteProduct(int id)
+    {
+        using var context = DbFactory.CreateDbContext();
+
+        var p = await context.Products.FirstOrDefaultAsync(x => x.Id == id);
+
+        if (p != null)
+        {
+            p.IsActive = false;
+
+            if (p.Stock != 0)
+            {
+                context.StockLogs.Add(new StockLog
+                {
+                    ProductId = p.Id,
+                    ChangeAmount = -p.Stock,
+                    ResultStock = 0,
+                    Reason = "Termék archiválása (Inaktívvá tétel)",
+                    Date = DateTime.Now
+                });
+                p.Stock = 0;
+            }
+
+            context.Products.Update(p);
+            await context.SaveChangesAsync();
+
+            await LoadData();
+        }
+    }
+
+    public class StockRequirement
+    {
+        public string ProductName { get; set; } = "";
+        public int CurrentStock { get; set; }
+        public int TotalOrdered { get; set; }
+        public int MissingAmount { get; set; }
+    }
+}

@@ -1,0 +1,479 @@
+﻿@page "/"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using System.Text.RegularExpressions
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Kezdőlap | Modern Webshop</PageTitle>
+
+@* --- ANIMATIONS & GOOGLE FONTS --- *@
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+
+@* Megoldás az újrarenderelésre: page-hidden/visible *@
+<div class="@(isReady ? "page-visible" : "page-hidden")">
+
+    @* --- HERO SECTION --- *@
+    <div class="hero-parallax overflow-hidden">
+        <div class="container h-100 position-relative" style="z-index: 2;">
+            <div class="row h-100 align-items-center py-4 py-lg-0">
+                <div class="col-lg-7 text-center text-lg-start text-white @(isReady ? "animate-desktop-only animate__animated animate__fadeInLeft" : "")">
+                    <h1 class="display-3 display-md-2 fw-bolder mb-4 lh-1 text-gradient">
+                        Stílus és Minőség<br />
+                        <span class="text-primary-gradient">Egyetlen Kattintásra.</span>
+                    </h1>
+                    <p class="fs-6 fs-md-5 mb-5 opacity-75 border-start-lg ps-lg-4 border-primary border-4 mx-auto mx-lg-0" style="max-width: 500px;">
+                        Fedezze fel prémium kollekciónkat, ahol a modern design találkozik a kompromisszumok nélküli tartóssággal.
+                    </p>
+                    <div class="d-flex gap-3 justify-content-center justify-content-lg-start flex-wrap">
+                        <button class="btn btn-primary btn-glow btn-lg rounded-pill px-5 py-3 fw-bold shadow-lg" @onclick='() => Nav.NavigateTo("/shop")'>
+                            BÖNGÉSZÉS <i class="bi bi-arrow-right ms-2"></i>
+                        </button>
+                        <button class="btn btn-outline-light btn-lg rounded-pill px-4 py-3 fw-bold border-2" @onclick='() => Nav.NavigateTo("/contact")'>KAPCSOLAT</button>
+                    </div>
+                </div>
+
+                <div class="col-lg-5 d-none d-lg-block text-center @(isReady ? "animate__animated animate__zoomIn" : "")" style="animation-delay: 0.5s;">
+                    <div class="hero-floating-box">
+                        <div class="hero-image-wrapper shadow-2xl rounded-5">
+                            <img src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=1000" class="img-fluid rounded-5" alt="Kiemelt termék" />
+                            <div class="glass-badge animate__animated animate__pulse animate__infinite">
+                                <span class="fw-bold">ÚJ KOLLEKCIÓ</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    @* --- INFO STRIP --- *@
+    <div class="info-strip py-4 py-lg-5 bg-white border-bottom">
+        <div class="container">
+            <div class="row g-3 g-lg-4 text-center">
+                <div class="col-6 col-md-4 @(isReady ? "animate-desktop-only animate__animated animate__fadeInUp" : "")">
+                    <div class="info-card h-100">
+                        <div class="icon-circle mb-2 mb-lg-3 mx-auto"><i class="bi bi-shield-check fs-4 fs-lg-3"></i></div>
+                        <h6 class="fw-bold text-uppercase small mb-1">Prémium Minőség</h6>
+                        <p class="x-small text-muted d-none d-lg-block">Válogatott alapanyagokból készült termékek.</p>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4 @(isReady ? "animate-desktop-only animate__animated animate__fadeInUp" : "")" style="animation-delay: 0.2s;">
+                    <div class="info-card h-100 border-start-lg border-end-lg border-light">
+                        <div class="icon-circle mb-2 mb-lg-3 mx-auto"><i class="bi bi-patch-check fs-4 fs-lg-3"></i></div>
+                        <h6 class="fw-bold text-uppercase small mb-1">2 Év Garancia</h6>
+                        <p class="x-small text-muted d-none d-lg-block">Minden termékre kiterjesztve.</p>
+                    </div>
+                </div>
+                <div class="col-12 col-md-4 @(isReady ? "animate-desktop-only animate__animated animate__fadeInUp" : "")" style="animation-delay: 0.4s;">
+                    <div class="info-card h-100">
+                        <div class="icon-circle mb-2 mb-lg-3 mx-auto"><i class="bi bi-truck fs-4 fs-lg-3"></i></div>
+                        <h6 class="fw-bold text-uppercase small mb-1">Gyors Szállítás</h6>
+                        <p class="x-small text-muted d-none d-lg-block">Akár 24 órán belül házhoz szállítjuk.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* --- KIEMELT TERMÉKEK --- *@
+    <div class="container py-5 mt-lg-5 position-relative">
+        <div class="d-flex align-items-end justify-content-between mb-4 mb-lg-5">
+            <div>
+                <h2 class="fw-bold mb-0 text-dark display-6 fs-2 fs-lg-1">Kiemelt ajánlataink</h2>
+                <div class="title-underline"></div>
+            </div>
+            <button class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-bold shadow-none" @onclick='() => Nav.NavigateTo("/shop")'>
+                Mind <i class="bi bi-arrow-right"></i>
+            </button>
+        </div>
+
+        @if (featuredProducts != null && featuredProducts.Any())
+        {
+            @* ASZTALI SLIDER *@
+            <div id="productCarouselDesktop" class="carousel slide d-none d-lg-block pb-5 animate__animated animate__fadeIn" data-bs-ride="carousel">
+                <div class="carousel-inner overflow-visible">
+                    @for (int i = 0; i < Math.Ceiling(featuredProducts.Count / 4.0); i++)
+                    {
+                        var group = featuredProducts.Skip(i * 4).Take(4).ToList();
+                        <div class="carousel-item @(i == 0 ? "active" : "")">
+                            <div class="row g-4">
+                                @foreach (var p in group)
+                                {
+                                    <div class="col-md-3">
+                                        <div class="product-premium-card card border-0 h-100 shadow-sm rounded-4 overflow-hidden">
+                                            <div class="img-container p-4" @onclick='() => Nav.NavigateTo($"/product/{p.Id}/{GenerateSlug(p.Name)}")'>
+                                                <img src="@p.ImageUrl" class="img-fluid" alt="@p.Name" />
+                                                <div class="hover-overlay">
+                                                    <span class="btn btn-light btn-sm rounded-pill px-3 fw-bold">Részletek</span>
+                                                </div>
+                                            </div>
+                                            <div class="card-body p-4 d-flex flex-column">
+                                                <h6 class="fw-bold text-dark text-truncate mb-2">@p.Name</h6>
+                                                <div class="mt-auto d-flex align-items-center justify-content-between">
+                                                    <div class="price-tag h5 fw-bold text-primary m-0">@p.Price.ToString("N0") Ft</div>
+                                                    <button class="btn btn-dark btn-sm rounded-pill px-3" @onclick='() => Nav.NavigateTo($"/product/{p.Id}/{GenerateSlug(p.Name)}")'>
+                                                        <i class="bi bi-eye"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* Kontrasztos asztali gombok *@
+                <button class="carousel-control-prev custom-nav-btn" type="button" data-bs-target="#productCarouselDesktop" data-bs-slide="prev">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                <button class="carousel-control-next custom-nav-btn" type="button" data-bs-target="#productCarouselDesktop" data-bs-slide="next">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+
+            @* MOBIL SLIDER: Most már gombokkal és magas kontraszttal *@
+            <div id="productCarouselMobile" class="carousel slide d-block d-lg-none pb-4" data-bs-ride="carousel">
+                <div class="carousel-inner">
+                    @for (int i = 0; i < featuredProducts.Count; i++)
+                    {
+                        var p = featuredProducts[i];
+                        <div class="carousel-item @(i == 0 ? "active" : "")">
+                            <div class="px-2">
+                                <div class="card border-0 shadow-md rounded-4 overflow-hidden" @onclick='() => Nav.NavigateTo($"/product/{p.Id}/{GenerateSlug(p.Name)}")'>
+                                    <div class="p-3 bg-light text-center position-relative">
+                                        <img src="@p.ImageUrl" class="img-fluid" style="height: 180px; object-fit: contain;" />
+                                    </div>
+                                    <div class="card-body p-3">
+                                        <h6 class="fw-bold text-dark mb-1 text-truncate">@p.Name</h6>
+                                        <div class="d-flex align-items-center justify-content-between">
+                                            <span class="fw-bold text-primary">@p.Price.ToString("N0") Ft</span>
+                                            <span class="btn btn-dark btn-sm rounded-pill px-3 fw-bold">Megnézem</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* Kontrasztos mobil gombok *@
+                <div class="d-flex justify-content-center align-items-center mt-3 gap-3">
+                    <button class="btn btn-dark rounded-circle d-flex align-items-center justify-content-center shadow"
+                            style="width: 40px; height: 40px;"
+                            type="button" data-bs-target="#productCarouselMobile" data-bs-slide="prev">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+
+                    <div class="d-flex gap-2">
+                        @for (int j = 0; j < featuredProducts.Count; j++)
+                        {
+                            <div class="mobile-dot @(j == 0 ? "active" : "")"></div>
+                        }
+                    </div>
+
+                    <button class="btn btn-dark rounded-circle d-flex align-items-center justify-content-center shadow"
+                            style="width: 40px; height: 40px;"
+                            type="button" data-bs-target="#productCarouselMobile" data-bs-slide="next">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    :root {
+        --primary-gradient: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%);
+    }
+
+    /* --- ANIMATION PROTECTION --- */
+    .page-hidden {
+        opacity: 0;
+    }
+
+    .page-visible {
+        opacity: 1;
+        transition: opacity 0.4s ease-in;
+    }
+
+    @@media (max-width: 991px) {
+        .animate-desktop-only {
+            animation: none !important;
+        }
+    }
+
+    /* --- HERO STYLES --- */
+    .hero-parallax {
+        min-height: 80vh;
+        background: #0f172a;
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .text-gradient {
+        background: linear-gradient(to right, #ffffff, #94a3b8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .text-primary-gradient {
+        background: var(--primary-gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .blob {
+        position: absolute;
+        width: 300px;
+        height: 300px;
+        background: var(--primary-gradient);
+        filter: blur(60px);
+        border-radius: 50%;
+        opacity: 0.15;
+        z-index: 1;
+    }
+
+    .blob-1 {
+        top: -50px;
+        right: -50px;
+        animation: float 8s infinite alternate;
+    }
+
+    .blob-2 {
+        bottom: -50px;
+        left: -50px;
+        animation: float 12s infinite alternate-reverse;
+    }
+
+    @@keyframes float {
+        0% {
+            transform: translate(0, 0);
+        }
+
+        100% {
+            transform: translate(30px, 30px);
+        }
+    }
+
+    .hero-image-wrapper {
+        background: white;
+        padding: 15px;
+        transform: perspective(1000px) rotateY(-10deg) rotateX(5deg);
+        transition: transform 0.5s ease;
+    }
+
+    .hero-floating-box:hover .hero-image-wrapper {
+        transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
+    }
+
+    .glass-badge {
+        position: absolute;
+        top: 20px;
+        left: -20px;
+        background: rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
+        padding: 10px 20px;
+        border-radius: 50px;
+        border: 1px solid rgba(255,255,255,0.3);
+        color: white;
+    }
+
+    /* --- INFO CARDS --- */
+    .icon-circle {
+        width: 55px;
+        height: 55px;
+        background: rgba(13, 110, 253, 0.1);
+        color: #0d6efd;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+    }
+
+    .info-card:hover .icon-circle {
+        background: #0d6efd;
+        color: white;
+        transform: scale(1.1);
+    }
+
+    /* --- PRODUCT CARDS --- */
+    .title-underline {
+        width: 60px;
+        height: 4px;
+        background: var(--primary-gradient);
+        border-radius: 10px;
+        margin-top: 8px;
+    }
+
+    .product-premium-card {
+        transition: all 0.4s ease;
+        cursor: pointer;
+    }
+
+        .product-premium-card:hover {
+            transform: translateY(-12px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.1) !important;
+        }
+
+    .img-container {
+        position: relative;
+        height: 220px;
+        overflow: hidden;
+        background: #f8f9fa;
+    }
+
+        .img-container img {
+            height: 100%;
+            width: 100%;
+            object-fit: contain;
+            transition: transform 0.5s ease;
+        }
+
+    .hover-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.05);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .product-premium-card:hover .hover-overlay {
+        opacity: 1;
+    }
+
+    .product-premium-card:hover .img-container img {
+        transform: scale(1.05);
+    }
+
+    /* --- JAVÍTOTT: KONTRASZTOS NAVIGÁCIÓS GOMBOK --- */
+    .custom-nav-btn {
+        width: 46px;
+        height: 46px;
+        background: #212529 !important; /* Sötét háttér a kontrasztért */
+        border-radius: 50%;
+        color: #ffffff !important; /* Fehér ikon */
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        border: none;
+        top: 40%;
+        position: absolute;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+    }
+
+        .custom-nav-btn:hover {
+            background: #0d6efd !important;
+            transform: scale(1.1);
+        }
+
+    .carousel-control-prev {
+        left: -60px;
+    }
+
+    .carousel-control-next {
+        right: -60px;
+    }
+
+    /* --- MOBILE DOTS --- */
+    .mobile-dot {
+        width: 6px;
+        height: 6px;
+        background: #cbd5e1;
+        border-radius: 50%;
+    }
+
+        .mobile-dot.active {
+            width: 15px;
+            background: #0d6efd;
+            border-radius: 10px;
+        }
+
+    @@media (max-width: 1200px) {
+        .carousel-control-prev {
+            left: 10px;
+        }
+
+        .carousel-control-next {
+            right: 10px;
+        }
+
+        .custom-nav-btn {
+            width: 40px;
+            height: 40px;
+        }
+    }
+
+    @@media (max-width: 768px) {
+        .hero-parallax {
+            min-height: 50vh;
+        }
+
+        .border-start-lg {
+            border-left: none !important;
+        }
+
+        .display-3 {
+            font-size: 2.2rem;
+        }
+    }
+</style>
+
+@code {
+    private List<Product> featuredProducts = new();
+    private bool isReady = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var context = DbFactory.CreateDbContext();
+        featuredProducts = await context.Products
+            .Where(p => p.IsActive)
+            .OrderByDescending(p => p.Id)
+            .Take(8)
+            .ToListAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Task.Delay(100);
+            isReady = true;
+            StateHasChanged();
+
+            await JS.InvokeVoidAsync("startCarousel", "productCarouselDesktop");
+            await JS.InvokeVoidAsync("startCarousel", "productCarouselMobile");
+        }
+    }
+
+    private string GenerateSlug(string name)
+    {
+        string slug = name.ToLower();
+        slug = Regex.Replace(slug, @"[áàäâ]", "a");
+        slug = Regex.Replace(slug, @"[éèëê]", "e");
+        slug = Regex.Replace(slug, @"[íìïî]", "i");
+        slug = Regex.Replace(slug, @"[óòöőô]", "o");
+        slug = Regex.Replace(slug, @"[úùüűû]", "u");
+        slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
+        slug = Regex.Replace(slug, @"\s+", "-").Trim('-');
+        return slug;
+    }
+}

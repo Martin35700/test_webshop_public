@@ -1,0 +1,142 @@
+﻿@using webshop.Services
+@using webshop.Models
+@using webshop.Data
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject CartService CartService
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@inject IDbContextFactory<AppDbContext> DbFactory
+@implements IDisposable
+@rendermode InteractiveServer
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (Nav.Uri.Contains("order-success"))
+            {
+                await JS.InvokeVoidAsync("localStorage.removeItem", "cart");
+                await CartService.ClearAsync(); // Aszinkron törlés
+            }
+            else
+            {
+                var json = await JS.InvokeAsync<string>("localStorage.getItem", "cart");
+                if (!string.IsNullOrEmpty(json))
+                {
+                    try
+                    {
+                        var savedData = JsonSerializer.Deserialize<List<CartStorageModel>>(json);
+
+                        if (savedData != null)
+                            await RestoreCartItems(savedData);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Hiba a kosár visszatöltésekor: {ex.Message}");
+                        // Ha sérült a JSON, inkább töröljük
+                        await JS.InvokeVoidAsync("localStorage.removeItem", "cart");
+                    }
+                }
+            }
+
+            // Feliratkozás a változásokra
+            CartService.OnChange += HandleCartChange;
+        }
+    }
+
+    private async Task RestoreCartItems(List<CartStorageModel> data)
+    {
+        using var context = DbFactory.CreateDbContext();
+        var restoredItems = new List<CartItem>();
+
+        foreach (var d in data)
+        {
+            // Lekérjük a friss adatokat az adatbázisból
+            var product = await context.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == d.PId && p.IsActive);
+
+            if (product != null)
+            {
+                int validatedQuantity = d.Qty;
+
+                // 1. LIMIT SZINKRONIZÁCIÓ (MaxQuantityPerOrder)
+                // Ha van limit, és a mentett mennyiség nagyobb, korrigáljuk
+                if (product.MaxQuantityPerOrder.HasValue && product.MaxQuantityPerOrder > 0)
+                {
+                    if (validatedQuantity > product.MaxQuantityPerOrder.Value)
+                    {
+                        validatedQuantity = product.MaxQuantityPerOrder.Value;
+                    }
+                }
+
+                // 2. KÉSZLET SZINKRONIZÁCIÓ (Stock)
+                if (product.StrictStockControl)
+                {
+                    if (product.Stock <= 0) continue; // Ha elfogyott, ugorjuk át (eltűnik a kosárból)
+
+                    if (validatedQuantity > product.Stock)
+                    {
+                        validatedQuantity = product.Stock; // Ha kevesebb van, mint amennyit mentettünk, csökkentsük le
+                    }
+                }
+
+                // Ha a validálás után maradt legalább 1 db, hozzáadjuk
+                if (validatedQuantity > 0)
+                {
+                    restoredItems.Add(new CartItem
+                    {
+                        Product = product,
+                        Quantity = validatedQuantity
+                    });
+                }
+            }
+        }
+
+        // Aszinkron betöltés
+        await CartService.LoadItemsAsync(restoredItems);
+
+        // Ha változott a darabszám a korrekciók miatt, mentsük is vissza a tiszta adatot a localStorage-ba
+        await HandleCartChangeInternal();
+    }
+
+    // Az eseménykezelőnek void-nak kell lennie, de belül meghívhatunk egy async Task-ot
+    private async void HandleCartChange()
+    {
+        await HandleCartChangeInternal();
+    }
+
+    private async Task HandleCartChangeInternal()
+    {
+        // Megnézzük, van-e tétel. Ha nincs, töröljük a tárolót.
+        if (CartService.Items == null || !CartService.Items.Any())
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("localStorage.removeItem", "cart");
+            }
+            catch { /* Esetleges szakadás kezelése */ }
+            return;
+        }
+
+        // Ha van tétel, mentünk
+        var flatList = CartService.Items.Select(i => new CartStorageModel { PId = i.Product.Id, Qty = i.Quantity }).ToList();
+        var json = JsonSerializer.Serialize(flatList);
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", "cart", json);
+        }
+        catch { }
+    }
+
+    public void Dispose()
+    {
+        CartService.OnChange -= HandleCartChange;
+    }
+
+    public class CartStorageModel 
+    { 
+        public int PId { get; set; }
+        public int Qty { get; set; }
+    }
+}

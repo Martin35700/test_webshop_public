@@ -1,0 +1,65 @@
+﻿@using Microsoft.AspNetCore.Components.Sections
+@inject NavigationManager NavManager
+
+<HeadContent>
+    @* --- Alap Meta Tagek --- *@
+    <title>@FinalTitle</title>
+    <meta name="description" content="@FinalDescription" />
+    <meta name="keywords" content="@Keywords" />
+    <link rel="canonical" href="@CurrentUrl" />
+
+    @* --- Open Graph (Facebook, stb.) --- *@
+    <meta property="og:type" content="@OgType" />
+    <meta property="og:title" content="@FinalTitle" />
+    <meta property="og:description" content="@FinalDescription" />
+    <meta property="og:url" content="@CurrentUrl" />
+    <meta property="og:site_name" content="Modern Webshop" />
+    <meta property="og:image" content="@FinalImageUrl" />
+
+    @* --- Twitter --- *@
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="@FinalTitle" />
+    <meta name="twitter:description" content="@FinalDescription" />
+    <meta name="twitter:image" content="@FinalImageUrl" />
+
+    @* --- ÚJ: Schema.org JSON-LD (Strukturált adatok) --- *@
+    @if (!string.IsNullOrEmpty(SchemaJson))
+    {
+        <script type="application/ld+json">
+            @((MarkupString)SchemaJson)
+        </script>
+    }
+</HeadContent>
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public string? ImageUrl { get; set; }
+    [Parameter] public string Keywords { get; set; } = "webshop, online vásárlás";
+    [Parameter] public string OgType { get; set; } = "website";
+
+    // ÚJ PARAMÉTER: A strukturált adat JSON formátumban
+    [Parameter] public string? SchemaJson { get; set; }
+
+    private const string DefaultTitle = "Modern Webshop";
+    private const string DefaultDescription = "Megbízható webáruház. Termékek gyors és megbízható szállítása";
+    private const string DefaultImage = "https://te-domain-neved.hu/images/logo.jpg"; // Cseréld le a sajátodra!
+
+    private string FinalTitle => string.IsNullOrWhiteSpace(Title) ? DefaultTitle : $"{Title} | Modern Webshop";
+    private string FinalDescription => string.IsNullOrWhiteSpace(Description) ? DefaultDescription : Truncate(Description, 160);
+    private string FinalImageUrl => string.IsNullOrWhiteSpace(ImageUrl) ? DefaultImage : GetAbsoluteUrl(ImageUrl);
+    private string CurrentUrl => NavManager.Uri;
+
+    private string GetAbsoluteUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return DefaultImage;
+        if (url.StartsWith("http")) return url;
+        return new Uri(new Uri(NavManager.BaseUri), url).ToString();
+    }
+
+    private string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
+    }
+}

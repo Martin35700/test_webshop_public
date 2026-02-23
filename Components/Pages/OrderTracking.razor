@@ -1,0 +1,182 @@
+﻿@page "/track-order"
+@page "/track-order/{Token}"
+@using webshop.Data
+@using webshop.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<div class="container py-5">
+    @if (order == null)
+    {
+        @* --- KERESŐ FELÜLET (Ha nincs token vagy érvénytelen) --- *@
+        <div class="row justify-content-center animate__animated animate__fadeIn">
+            <div class="col-md-6 col-lg-5">
+                <div class="card border-0 shadow-lg rounded-5 p-4 p-md-5 text-center">
+                    <div class="mb-4">
+                        <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center" style="width: 80px; height: 80px;">
+                            <i class="bi bi-search fs-1 text-primary"></i>
+                        </div>
+                    </div>
+                    <h3 class="fw-bold mb-3">Rendelés keresése</h3>
+                    <p class="text-muted small mb-4">Add meg a vásárlás után kapott egyedi követési kódodat:</p>
+
+                    <div class="input-group mb-3 shadow-sm rounded-pill overflow-hidden border">
+                        <input type="text" class="form-control border-0 py-3 px-4 shadow-none"
+                               placeholder="Kód beillesztése..."
+                               @bind="inputToken"
+                               @onkeyup="HandleKey" />
+                        <button class="btn btn-primary px-4 fw-bold" @onclick="SearchByToken">
+                            Keresés
+                        </button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger-subtle text-danger border-0 small rounded-3 py-2 animate__animated animate__shakeX">
+                            <i class="bi bi-exclamation-circle me-1"></i> @errorMessage
+                        </div>
+                    }
+
+                    <p class="text-muted mt-4 small">
+                        <i class="bi bi-info-circle me-1"></i> A kódot a visszaigazoló e-mailben is megtalálod.
+                    </p>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        @* --- RENDELÉS ADATAI (Ha van érvényes kód) --- *@
+        @* ... Ide jön a korábbi OrderTracking dizájn (Progress Bar, Táblázat, stb.) ... *@
+        <div class="card border-0 shadow-sm rounded-4 p-4 p-md-5 animate__animated animate__fadeIn">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <button class="btn btn-link text-muted p-0 text-decoration-none" @onclick="ResetSearch">
+                    <i class="bi bi-arrow-left"></i> Új keresés
+                </button>
+                <span class="badge @GetStatusBadgeClass(order.Status) px-4 py-2 rounded-pill fs-6 shadow-sm">
+                    @GetStatusDisplayName(order.Status)
+                </span>
+            </div>
+
+            <h3 class="fw-bold mb-4">Rendelés #@order.Id</h3>
+
+            @* Progress Bar részlet (amit korábban megírtunk) *@
+            <div class="tracking-progress-container mb-5">
+                @{
+                    var (progress, colorClass) = GetProgressData(order.Status);
+                }
+                <div class="progress rounded-pill shadow-sm" style="height: 12px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated @colorClass"
+                         role="progressbar" style="width: @progress%"></div>
+                </div>
+                <div class="d-flex justify-content-between small text-muted mt-3 fw-bold px-1 text-center">
+                    <div style="width: 20%">Leadva</div>
+                    <div style="width: 20%">Feldolgozás</div>
+                    <div style="width: 20%">Összekészítve</div>
+                    <div style="width: 20%">Szállítás</div>
+                    <div style="width: 20%">Kézbesítve</div>
+                </div>
+            </div>
+
+            @* ... Táblázat és adatok maradnak a korábbi verzióból ... *@
+            <div class="mt-4">
+                <h5 class="fw-bold mb-3">Tételek</h5>
+                @foreach (var item in order.Items)
+                {
+                    <div class="d-flex justify-content-between border-bottom py-2">
+                        <span>@item.ProductName (@item.Quantity db)</span>
+                        <span class="fw-bold">@((item.Price * item.Quantity).ToString("N0")) Ft</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Token { get; set; }
+    private Order? order;
+    private string inputToken = "";
+    private string errorMessage = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        errorMessage = "";
+        if (!string.IsNullOrEmpty(Token))
+        {
+            await LoadOrder(Token);
+        }
+        else
+        {
+            order = null;
+        }
+    }
+
+    private async Task LoadOrder(string token)
+    {
+        using var context = DbFactory.CreateDbContext();
+        order = await context.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.SecretToken == token);
+
+        if (order == null)
+        {
+            errorMessage = "Nem található rendelés ezzel a kóddal.";
+        }
+    }
+
+    private async Task SearchByToken()
+    {
+        if (string.IsNullOrWhiteSpace(inputToken))
+        {
+            errorMessage = "Kérjük, írd be a kódot!";
+            return;
+        }
+
+        // Átirányítás önmagára a paraméterrel - ez frissíti az oldalt
+        Nav.NavigateTo($"/track-order/{inputToken.Trim()}");
+    }
+
+    private void HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") SearchByToken();
+    }
+
+    private void ResetSearch()
+    {
+        order = null;
+        inputToken = "";
+        Nav.NavigateTo("/track-order");
+    }
+
+    // --- Segédmetódusok (displayName, badgeClass, progressData) ugyanazok mint korábban ---
+    private string GetStatusDisplayName(OrderStatus status) => status switch
+    {
+        OrderStatus.FeldolgozásAlatt => "Feldolgozás alatt",
+        OrderStatus.SzállításAlatt => "Szállítás alatt",
+        _ => status.ToString()
+    };
+
+    private string GetStatusBadgeClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Teljesítve => "bg-success text-white",
+        OrderStatus.Feldolgozva => "bg-info text-dark border border-info",
+        OrderStatus.SzállításAlatt => "bg-primary text-white",
+        OrderStatus.FeldolgozásAlatt => "bg-warning text-dark",
+        OrderStatus.Lemondva => "bg-danger text-white",
+        _ => "bg-secondary text-white"
+    };
+
+    private (int progress, string colorClass) GetProgressData(OrderStatus status) => status switch
+    {
+        OrderStatus.Feldolgozatlan => (20, "bg-info"),
+        OrderStatus.FeldolgozásAlatt => (40, "bg-warning"),
+        OrderStatus.Feldolgozva => (60, "bg-info"),
+        OrderStatus.SzállításAlatt => (80, "bg-primary"),
+        OrderStatus.Teljesítve => (100, "bg-success"),
+        OrderStatus.Lemondva => (100, "bg-danger"),
+        _ => (0, "bg-secondary")
+    };
+}

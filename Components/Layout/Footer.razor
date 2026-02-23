@@ -1,0 +1,148 @@
+﻿@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<footer class="bg-dark text-light pt-5 pb-3 mt-5">
+    <div class="container">
+        <div class="row g-4">
+			<NewsletterBox />
+        </div>
+
+        <div class="row g-4">
+            @* 1. OSZLOP: Rólunk *@
+            <div class="col-lg-4 col-md-6">
+                <h5 class="fw-bold mb-4 text-primary">Modern Webshop</h5>
+                <p class="text-white-50 small lh-lg">
+                    Célunk a legmodernebb technológiák és a legjobb minőségű termékek eljuttatása minden otthonba.
+                    Megbízható szállítás, garancia és szakértő ügyfélszolgálat.
+                </p>
+                <div class="d-flex gap-3 mt-4">
+                    <a href="#" class="social-icon"><i class="bi bi-facebook"></i></a>
+                    <a href="#" class="social-icon"><i class="bi bi-instagram"></i></a>
+                    <a href="#" class="social-icon"><i class="bi bi-linkedin"></i></a>
+                </div>
+            </div>
+
+            @* 2. OSZLOP: Gyorslinkek *@
+            <div class="col-lg-2 col-md-6">
+                <h6 class="fw-bold mb-4">Navigáció</h6>
+                <ul class="list-unstyled">
+                    <li class="mb-2"><a href="/" class="text-white-50 text-decoration-none hover-link">Főoldal</a></li>
+                    <li class="mb-2"><a href="shop" class="text-white-50 text-decoration-none hover-link">Termékek</a></li>
+                    <li class="mb-2"><a href="cart" class="text-white-50 text-decoration-none hover-link">Kosár</a></li>
+                    <li class="mb-2"><a href="Account/Profile" class="text-white-50 text-decoration-none hover-link">Profilom</a></li>
+                    <li class="mb-2"><a href="contact" class="text-white-50 text-decoration-none hover-link">Kapcsolat</a></li>
+                </ul>
+            </div>
+
+            @* 3. OSZLOP: Információk *@
+            <div class="col-lg-3 col-md-6">
+                <h6 class="fw-bold mb-4">Információk</h6>
+                <ul class="list-unstyled text-white-50 small">
+                    <li class="mb-2"><a href="/terms" class="text-white-50 text-decoration-none hover-link">Általános Szerződési Feltételek</a></li>
+                    <li class="mb-2"><a href="/privacy" class="text-white-50 text-decoration-none hover-link">Adatkezelési Tájékoztató</a></li>
+                    <li class="mb-2"><a href="/shipping" class="text-white-50 text-decoration-none hover-link">Szállítási információk</a></li>
+                    <li class="mb-2"><a href="/warranty" class="text-white-50 text-decoration-none hover-link">Garancia és visszaküldés</a></li>
+                </ul>
+            </div>
+
+            @* 4. OSZLOP: Kapcsolat *@
+            <div class="col-lg-3 col-md-6">
+                <h6 class="fw-bold mb-4">Kapcsolat</h6>
+                <ul class="list-unstyled text-white-50 small">
+                    <li class="d-flex align-items-start mb-3">
+                        <i class="bi bi-geo-alt-fill text-primary me-2 mt-1"></i>
+                        <span>1051 Budapest, Kossuth tér 1.</span>
+                    </li>
+                    <li class="d-flex align-items-center mb-3">
+                        <i class="bi bi-telephone-fill text-primary me-2"></i>
+                        <span>+36 30 123 4567</span>
+                    </li>
+                    <li class="d-flex align-items-center mb-3">
+                        <i class="bi bi-envelope-fill text-primary me-2"></i>
+                        <span>info@modernwebshop.hu</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <hr class="mt-5 mb-4 text-white-50">
+
+        <div class="row align-items-center">
+            <div class="col-md-6 text-center text-md-start">
+                <p class="small mb-0 text-white-50">
+                    &copy; @DateTime.Now.Year Modern Webshop - Minden jog fenntartva.
+                </p>
+            </div>
+            <div class="col-md-6 text-center text-md-end mt-3 mt-md-0">
+                <div class="payment-icons">
+                    <i class="bi bi-credit-card-2-back fs-4 me-3" title="Visa / Mastercard"></i>
+                    <i class="bi bi-paypal fs-4 me-3" title="PayPal"></i>
+                    <i class="bi bi-wallet2 fs-4" title="Utánvét"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Vissza a tetejére gomb *@
+    <button type="button"
+            @onclick="ScrollToTop"
+            class="btn btn-primary rounded-circle position-fixed bottom-0 end-0 m-4 shadow-lg btn-scroll-top"
+            style="z-index: 2000; width: 50px; height: 50px;">
+        <i class="bi bi-arrow-up fs-4"></i>
+    </button>
+</footer>
+
+<style>
+    .hover-link {
+        transition: all 0.3s ease;
+    }
+
+        .hover-link:hover {
+            color: var(--bs-primary) !important;
+            padding-left: 8px;
+        }
+
+    .social-icon {
+        color: #adb5bd;
+        transition: color 0.3s ease;
+    }
+
+        .social-icon:hover {
+            color: #0d6efd;
+        }
+
+    .btn-scroll-top {
+        transition: transform 0.3s ease, opacity 0.3s ease;
+        border: 2px solid white;
+    }
+
+        .btn-scroll-top:hover {
+            transform: scale(1.1);
+            background-color: #0056b3;
+        }
+
+    .payment-icons i {
+        color: #6c757d;
+        transition: color 0.3s ease;
+    }
+
+        .payment-icons i:hover {
+            color: #fff;
+        }
+</style>
+
+@code {
+    private bool showScrollBtn = true;
+
+    private async Task ScrollToTop()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("scrollToTop");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error scrolling to top: {ex.Message}");
+        }
+    }
+}

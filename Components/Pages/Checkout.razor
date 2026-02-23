@@ -1,0 +1,530 @@
+﻿@page "/checkout"
+@using webshop.Models
+@using webshop.Services
+@using webshop.Data
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Hosting
+@using System.IO
+@using System.ComponentModel.DataAnnotations
+
+@inject CartService CartService
+@inject SettingsService Settings
+@inject NavigationManager NavigationManager
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+@inject EmailService EmailService
+@inject IWebHostEnvironment Environment
+@inject EmailQueue EmailQueue
+@inject IServiceProvider ServiceProvider
+@inject StripeService StripeService
+@inject PdfService PdfService
+@inject IJSRuntime JS
+
+@rendermode InteractiveServer
+
+<PageTitle>Pénztár - Modern Webshop</PageTitle>
+
+<div class="container py-5">
+    <div class="row g-5">
+        <div class="col-lg-8">
+            <div class="d-flex align-items-center mb-4">
+                <button class="btn btn-link text-dark p-0 me-3" @onclick='() => NavigationManager.NavigateTo("/cart")'>
+                    <i class="bi bi-arrow-left fs-4"></i>
+                </button>
+                <h3 class="fw-bold m-0">Szállítási és számlázási adatok</h3>
+            </div>
+
+            @if (errorMessage != null)
+            {
+                <div class="alert alert-danger rounded-4 mb-4 shadow-sm animate__animated animate__shakeX">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i> @errorMessage
+                </div>
+            }
+
+            <EditForm Model="OrderInfo" OnValidSubmit="HandlePurchase">
+                <DataAnnotationsValidator />
+
+                @* --- 1. SZEMÉLYES ADATOK --- *@
+                <div class="card border-0 shadow-sm rounded-4 p-4 mb-4">
+                    <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-person-vcard me-2"></i>Személyes adatok</h5>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Teljes név</label>
+                            <InputText @bind-Value="OrderInfo.Name" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="Minta János" />
+                            <ValidationMessage For="() => OrderInfo.Name" class="text-danger small" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">E-mail cím</label>
+                            <InputText @bind-Value="OrderInfo.Email" type="email" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="janos@pelda.hu" />
+                            <ValidationMessage For="() => OrderInfo.Email" class="text-danger small" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Telefonszám</label>
+                            <InputText @bind-Value="OrderInfo.PhoneNumber" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="+36 30 123 4567" />
+                            <ValidationMessage For="() => OrderInfo.PhoneNumber" class="text-danger small" />
+                        </div>
+                    </div>
+                </div>
+
+                @* --- 2. SZÁLLÍTÁSI ADATOK --- *@
+                <div class="card border-0 shadow-sm rounded-4 p-4 mb-4">
+                    <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-truck me-2"></i>Szállítási cím</h5>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">Irányítószám</label>
+                            <InputText @bind-Value="OrderInfo.Zip" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="1234" />
+                            <ValidationMessage For="() => OrderInfo.Zip" class="text-danger small" />
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label fw-semibold">Város</label>
+                            <InputText @bind-Value="OrderInfo.City" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="Budapest" />
+                            <ValidationMessage For="() => OrderInfo.City" class="text-danger small" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Cím (utca, házszám)</label>
+                            <InputText @bind-Value="OrderInfo.Address" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="Fő utca 1." />
+                            <ValidationMessage For="() => OrderInfo.Address" class="text-danger small" />
+                        </div>
+                    </div>
+                </div>
+
+                @* --- 3. SZÁMLÁZÁSI ADATOK --- *@
+                <div class="card border-0 shadow-sm rounded-4 p-4 mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-primary m-0"><i class="bi bi-receipt me-2"></i>Számlázási cím</h5>
+                    </div>
+
+                    <div class="form-check form-switch p-3 bg-light rounded-3 mb-3 d-flex align-items-center">
+                        <InputCheckbox @bind-Value="OrderInfo.BillingSameAsShipping" class="form-check-input mx-3" id="billingCheck" style="cursor:pointer" />
+                        <label class="form-check-label fw-semibold ms-2" for="billingCheck" style="cursor:pointer">
+                            Megegyezik a szállítási címmel
+                        </label>
+                    </div>
+
+                    @if (!OrderInfo.BillingSameAsShipping)
+                    {
+                        <div class="row g-3 animate__animated animate__fadeIn">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Irányítószám</label>
+                                <InputText @bind-Value="OrderInfo.BillingZip" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="1234" />
+                                <ValidationMessage For="() => OrderInfo.BillingZip" class="text-danger small" />
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label fw-semibold">Város</label>
+                                <InputText @bind-Value="OrderInfo.BillingCity" class="form-control form-control-lg rounded-3 border-0 bg-light" placeholder="Budapest" />
+                                <ValidationMessage For="() => OrderInfo.BillingCity" class="text-danger small" />
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Cím (utca, házszám)</label>
+                                <InputText @bind-Value="OrderInfo.BillingAddress" class="form-control form-control-lg rounded-3 border-0 bg-light" />
+                                <ValidationMessage For="() => OrderInfo.BillingAddress" class="text-danger small" />
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* --- 4. SZÁLLÍTÁS ÉS FIZETÉS --- *@
+                <div class="card border-0 shadow-sm rounded-4 p-4 mb-4">
+                    <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-wallet2 me-2"></i>Szállítás és fizetés</h5>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Szállítási mód</label>
+                            <InputSelect @bind-Value="OrderInfo.ShippingMethod" class="form-select form-select-lg rounded-3 border-0 bg-light shadow-sm">
+                                <option value="Házhozszállítás">Házhozszállítás (Futár)</option>
+                                <option value="Személyes">Személyes átvétel</option>
+                            </InputSelect>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Fizetési mód</label>
+                            <InputSelect @bind-Value="OrderInfo.PaymentMethod" class="form-select form-select-lg rounded-3 border-0 bg-light shadow-sm">
+                                <option value="Bankkártya">Bankkártya (Online)</option>
+                                <option value="Utánvét">Utánvét</option>
+                                <option value="Utalás">Banki átutalás</option>
+                            </InputSelect>
+                        </div>
+                    </div>
+                </div>
+
+                <AuthorizeView Context="authContext">
+                    <NotAuthorized>
+                        <div class="col-12 mt-4">
+                            <div class="card bg-warning bg-opacity-10 border-0 p-4 rounded-4 shadow-sm">
+                                <div class="form-check">
+                                    <InputCheckbox @bind-Value="OrderInfo.CreateAccount" class="form-check-input" id="regCheck" />
+                                    <label class="form-check-label fw-bold" for="regCheck">
+                                        Fiók létrehozása a későbbi vásárlásokhoz
+                                    </label>
+                                </div>
+                                @if (OrderInfo.CreateAccount)
+                                {
+                                    <div class="mt-3 animate__animated animate__fadeIn">
+                                        <label class="form-label small fw-semibold">Jelszó megadása</label>
+                                        <InputText @bind-Value="OrderInfo.Password" type="password" class="form-control rounded-3 border-0" placeholder="Minimum 6 karakter" />
+                                        <ValidationMessage For="() => OrderInfo.Password" class="text-danger small" />
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </NotAuthorized>
+                </AuthorizeView>
+
+                <div class="col-12 mt-5">
+                    <button type="submit" class="btn btn-dark btn-lg w-100 rounded-pill py-3 fw-bold shadow hover-scale" disabled="@isProcessing">
+                        @if (isProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            <span>Feldolgozás...</span>
+                        }
+                        else
+                        {
+                            <span>Rendelés véglegesítése és leadása</span>
+                        }
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm rounded-4 p-4 sticky-top" style="top: 20px;">
+                <h5 class="fw-bold mb-4">Rendelés összegzése</h5>
+                <div class="overflow-auto mb-3" style="max-height: 300px;">
+                    @foreach (var item in CartService.Items)
+                    {
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="small pe-2">
+                                <span class="badge bg-secondary rounded-pill me-1">@item.Quantity</span>
+                                <span class="text-muted">@item.Product.Name</span>
+                            </div>
+                            <div class="small fw-bold text-nowrap">@((item.Product.Price * item.Quantity).ToString("N0")) Ft</div>
+                        </div>
+                    }
+                </div>
+
+                <hr class="my-3">
+                <div class="coupon-section mb-3">
+                    <label class="small fw-bold text-muted text-uppercase mb-2 d-block">Kuponkód</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control form-control-sm rounded-start-3" @bind="couponInput" placeholder="Kód beírása..." disabled="@(appliedCoupon != null)" />
+                        @if (appliedCoupon == null)
+                        {
+                            <button class="btn btn-outline-primary btn-sm rounded-end-3" @onclick="ApplyCoupon">Érvényesítés</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-outline-danger btn-sm rounded-end-3" @onclick="RemoveCoupon"><i class="bi bi-x-lg"></i></button>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(couponMessage))
+                    {
+                        <div class="small mt-1 @(appliedCoupon != null ? "text-success" : "text-danger")">@couponMessage</div>
+                    }
+                </div>
+
+                <hr class="my-3">
+
+                <div class="d-flex justify-content-between mb-2 small text-muted">
+                    <span>Részösszeg:</span>
+                    <span>@CartService.TotalPrice.ToString("N0") Ft</span>
+                </div>
+
+                @if (discountAmount > 0)
+                {
+                    <div class="d-flex justify-content-between mb-2 small text-success fw-bold">
+                        <span>Kedvezmény (@appliedCoupon?.Code):</span>
+                        <span>-@discountAmount.ToString("N0") Ft</span>
+                    </div>
+                }
+
+                <div class="d-flex justify-content-between mb-3 small text-muted">
+                    <span>Szállítás (@deliveryTime):</span>
+                    @if (CurrentShippingFee == 0)
+                    {
+                        <span class="text-success fw-bold">@(appliedCoupon?.Type == CouponType.FreeShipping ? "Ingyenes (Kupon)" : "Ingyenes")</span>
+                    }
+                    else
+                    {
+                        <span>@CurrentShippingFee.ToString("N0") Ft</span>
+                    }
+                </div>
+
+                <div class="d-flex justify-content-between h4 fw-bold text-primary border-top pt-3">
+                    <span>Végösszeg:</span>
+                    <span>@finalTotalWithEverything.ToString("N0") Ft</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private OrderMetadata OrderInfo = new();
+    private bool isProcessing = false;
+    private string? errorMessage = null;
+
+    private decimal freeLimit;
+    private decimal baseShippingFee;
+    private string deliveryTime = "";
+
+    private string couponInput = "";
+    private Coupon? appliedCoupon = null;
+    private string couponMessage = "";
+    private decimal discountAmount = 0;
+
+    private decimal CurrentShippingFee
+    {
+        get
+        {
+            if (appliedCoupon?.Type == CouponType.FreeShipping) return 0;
+            return CartService.TotalPrice >= freeLimit ? 0 : baseShippingFee;
+        }
+    }
+
+    private decimal finalTotalWithEverything => (CartService.TotalPrice - discountAmount) + CurrentShippingFee;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Settings.LoadSettingsAsync();
+        freeLimit = Settings.GetDecimal("FreeShippingLimit", 20000);
+        baseShippingFee = Settings.GetDecimal("ShippingFee", 1990);
+        deliveryTime = Settings.GetString("DeliveryTime", "2-4 munkanap");
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userClaims = authState.User;
+
+        if (userClaims.Identity?.IsAuthenticated == true)
+        {
+            var user = await UserManager.GetUserAsync(userClaims);
+            if (user != null)
+            {
+                OrderInfo.Name = user.FullName;
+                OrderInfo.Email = user.Email ?? "";
+                OrderInfo.PhoneNumber = user.PhoneNumber ?? "";
+                OrderInfo.Zip = user.Zip;
+                OrderInfo.City = user.City;
+                OrderInfo.Address = user.Address;
+
+                if (!string.IsNullOrEmpty(user.BillingAddress))
+                {
+                    OrderInfo.BillingSameAsShipping =
+                        user.BillingZip == user.Zip &&
+                        user.BillingCity == user.City &&
+                        user.BillingAddress == user.Address;
+
+                    if (!OrderInfo.BillingSameAsShipping)
+                    {
+                        OrderInfo.BillingZip = user.BillingZip ?? "";
+                        OrderInfo.BillingCity = user.BillingCity ?? "";
+                        OrderInfo.BillingAddress = user.BillingAddress ?? "";
+                    }
+                }
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await Task.Delay(150);
+            CalculateDiscount();
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApplyCoupon()
+    {
+        if (string.IsNullOrWhiteSpace(OrderInfo.Email)) { couponMessage = "Kérjük, add meg az e-mail címedet!"; return; }
+        if (string.IsNullOrWhiteSpace(couponInput)) return;
+
+        using var context = DbFactory.CreateDbContext();
+        var code = couponInput.Trim().ToUpper();
+        var email = OrderInfo.Email.Trim().ToLower();
+        var coupon = await context.Coupons.FirstOrDefaultAsync(c => c.Code == code && c.IsActive);
+
+        if (coupon == null) { couponMessage = "Érvénytelen kupon."; appliedCoupon = null; discountAmount = 0; return; }
+        if (coupon.ExpiryDate.HasValue && coupon.ExpiryDate.Value < DateTime.Now) { couponMessage = "Lejárt kupon."; return; }
+        if (CartService.TotalPrice < coupon.MinimumOrderAmount) { couponMessage = $"Minimum rendelés: {coupon.MinimumOrderAmount:N0} Ft"; return; }
+
+        var alreadyUsed = await context.CouponUsages.AnyAsync(u => u.CouponId == coupon.Id && u.Email == email);
+        if (alreadyUsed) { couponMessage = "Már felhasználtad ezt a kupont."; return; }
+
+        appliedCoupon = coupon;
+        CalculateDiscount();
+        couponMessage = "Kupon érvényesítve!";
+        StateHasChanged();
+    }
+
+    private void CalculateDiscount()
+    {
+        if (appliedCoupon == null) discountAmount = 0;
+        else if (appliedCoupon.Type == CouponType.FixedAmount) discountAmount = appliedCoupon.Value;
+        else if (appliedCoupon.Type == CouponType.Percentage) discountAmount = Math.Round(CartService.TotalPrice * (appliedCoupon.Value / 100));
+    }
+
+    private void RemoveCoupon() { appliedCoupon = null; couponInput = ""; couponMessage = ""; discountAmount = 0; }
+
+    private async Task HandlePurchase()
+    {
+        using var context = DbFactory.CreateDbContext();
+
+        var isBlacklisted = await context.BlacklistedUsers.AnyAsync(b => b.Email.ToLower() == OrderInfo.Email.ToLower());
+        if (isBlacklisted)
+        {
+            errorMessage = "A megadott e-mail címmel sajnos nem tudunk rendelést fogadni.";
+            return;
+        }
+
+        if (!CartService.Items.Any())
+        {
+            errorMessage = "A kosarad üres.";
+            return;
+        }
+
+        isProcessing = true;
+        errorMessage = null;
+
+        try
+        {
+            string? currentUserId = null;
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+
+            if (authState.User.Identity?.IsAuthenticated == true)
+            {
+                var user = await UserManager.GetUserAsync(authState.User);
+                currentUserId = user?.Id;
+            }
+            else if (OrderInfo.CreateAccount)
+            {
+                var user = new ApplicationUser
+                {
+                    UserName = OrderInfo.Email,
+                    Email = OrderInfo.Email,
+                    FullName = OrderInfo.Name,
+                    PhoneNumber = OrderInfo.PhoneNumber,
+                    Zip = OrderInfo.Zip,
+                    City = OrderInfo.City,
+                    Address = OrderInfo.Address,
+                    BillingZip = OrderInfo.BillingSameAsShipping ? OrderInfo.Zip : OrderInfo.BillingZip,
+                    BillingCity = OrderInfo.BillingSameAsShipping ? OrderInfo.City : OrderInfo.BillingCity,
+                    BillingAddress = OrderInfo.BillingSameAsShipping ? OrderInfo.Address : OrderInfo.BillingAddress
+                };
+
+                var result = await UserManager.CreateAsync(user, OrderInfo.Password!);
+                if (result.Succeeded) currentUserId = user.Id;
+                else
+                {
+                    errorMessage = "Hiba a regisztrációnál. Próbálj meg más e-mail címet.";
+                    isProcessing = false;
+                    return;
+                }
+            }
+
+            var tempLogs = new List<StockLog>();
+            foreach (var item in CartService.Items)
+            {
+                var dbProduct = await context.Products.FindAsync(item.Product.Id);
+                if (dbProduct != null)
+                {
+                    if (dbProduct.StrictStockControl && dbProduct.Stock < item.Quantity)
+                    {
+                        errorMessage = $"Sajnos a(z) {dbProduct.Name} termékből nincs elég készleten.";
+                        isProcessing = false;
+                        return;
+                    }
+                    dbProduct.Stock -= item.Quantity;
+                    var log = new StockLog { ProductId = dbProduct.Id, ChangeAmount = -item.Quantity, ResultStock = dbProduct.Stock, Reason = "Függőben...", Date = DateTime.Now };
+                    tempLogs.Add(log);
+                    context.StockLogs.Add(log);
+                }
+            }
+
+            var newOrder = new Order
+            {
+                OrderDate = DateTime.Now,
+                UserId = currentUserId,
+                CustomerName = OrderInfo.Name,
+                Email = OrderInfo.Email,
+                PhoneNumber = OrderInfo.PhoneNumber,
+                Address = OrderInfo.Address,
+                City = OrderInfo.City,
+                Zip = OrderInfo.Zip,
+                BillingZip = OrderInfo.BillingSameAsShipping ? OrderInfo.Zip : OrderInfo.BillingZip,
+                BillingCity = OrderInfo.BillingSameAsShipping ? OrderInfo.City : OrderInfo.BillingCity,
+                BillingAddress = OrderInfo.BillingSameAsShipping ? OrderInfo.Address : OrderInfo.BillingAddress,
+                ShippingMethod = OrderInfo.ShippingMethod,
+                PaymentMethod = OrderInfo.PaymentMethod,
+                ShippingFee = CurrentShippingFee,
+                DiscountAmount = discountAmount,
+                TotalAmount = finalTotalWithEverything,
+                Status = OrderStatus.Feldolgozatlan,
+                PaymentStatus = PaymentStatus.Fizetendő,
+                SecretToken = Guid.NewGuid().ToString("n"),
+                CouponID = appliedCoupon?.Id,
+                Items = CartService.Items.Select(i => new OrderItem
+                {
+                    ProductId = i.Product.Id,
+                    ProductName = i.Product.Name,
+                    Quantity = i.Quantity,
+                    Price = i.Product.Price,
+                    IsPicked = false
+                }).ToList()
+            };
+
+            context.Orders.Add(newOrder);
+
+            if (appliedCoupon != null && newOrder.PaymentMethod != "Bankkártya")
+            {
+                await FinalizeCouponUsage(context, newOrder, appliedCoupon.Id);
+            }
+
+            await context.SaveChangesAsync();
+            foreach (var log in tempLogs) { log.Reason = $"Rendelés: #{newOrder.Id}"; }
+            await context.SaveChangesAsync();
+
+            if (newOrder.PaymentMethod == "Bankkártya")
+            {
+                var stripeUrl = await StripeService.CreateCheckoutSessionAsync(newOrder, NavigationManager.BaseUri);
+                await CartService.ClearAsync();
+                await JS.InvokeVoidAsync("localStorage.removeItem", "cart");
+                NavigationManager.NavigateTo(stripeUrl);
+                return;
+            }
+
+            var pdfBytes = PdfService.GenerateOrderPdf(newOrder);
+            var filePath = Path.Combine(Environment.WebRootPath, "invoices", $"order_{newOrder.Id}.pdf");
+            if (!Directory.Exists(Path.GetDirectoryName(filePath))) Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+            await File.WriteAllBytesAsync(filePath, pdfBytes);
+
+            EmailQueue.QueueEmail(async (token) =>
+            {
+                using var scope = ServiceProvider.CreateScope();
+                var emailSvc = scope.ServiceProvider.GetRequiredService<EmailService>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var orderData = await dbContext.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == newOrder.Id);
+                if (orderData != null) await emailSvc.SendOrderConfirmationEmailAsync(orderData, filePath);
+            });
+
+            await CartService.ClearAsync();
+            NavigationManager.NavigateTo($"/order-success/{newOrder.SecretToken}");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Váratlan hiba történt a rendelés feldolgozása során.";
+            isProcessing = false;
+            Console.WriteLine(ex.Message);
+        }
+    }
+
+    private async Task FinalizeCouponUsage(AppDbContext context, Order order, int couponId)
+    {
+        var dbCoupon = await context.Coupons.FindAsync(couponId);
+        if (dbCoupon != null)
+        {
+            dbCoupon.UsedCount++;
+            context.CouponUsages.Add(new CouponUsage { CouponId = couponId, UserId = order.UserId, Email = order.Email, UsedAt = DateTime.Now });
+        }
+    }
+}

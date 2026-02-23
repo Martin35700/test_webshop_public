@@ -1,0 +1,98 @@
+﻿@page "/unsubscribe"
+@using webshop.Services
+@inject NewsletterService NewsletterService
+@inject NavigationManager Nav
+@rendermode InteractiveServer
+
+<PageTitle>Leiratkozás</PageTitle>
+
+<div class="container py-5 mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-5">
+            <div class="card border-0 shadow-lg rounded-4 overflow-hidden">
+                <div class="card-body p-5 text-center">
+
+                    @if (isLoading)
+                    {
+                        <div class="spinner-border text-primary mb-3" role="status"></div>
+                        <h4 class="fw-bold">Feldolgozás...</h4>
+                        <p class="text-muted">Kérlek várj, amíg frissítjük a beállításaidat.</p>
+                    }
+                    else if (isSuccess)
+                    {
+                        <div class="mb-4 text-success">
+                            <i class="bi bi-check-circle-fill" style="font-size: 4rem;"></i>
+                        </div>
+                        <h3 class="fw-bold mb-3">Sikeres leiratkozás</h3>
+                        <p class="text-muted mb-4">
+                            Sajnáljuk, hogy mész! Az e-mail címedet (<strong>@Email</strong>) eltávolítottuk a hírlevél listánkról.
+                        </p>
+                        <button class="btn btn-outline-dark rounded-pill px-4" @onclick='() => Nav.NavigateTo("/")'>
+                            Vissza a főoldalra
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="mb-4 text-warning">
+                            <i class="bi bi-exclamation-circle-fill" style="font-size: 4rem;"></i>
+                        </div>
+                        <h3 class="fw-bold mb-3">Hiba történt</h3>
+                        <p class="text-muted mb-4">
+                            Nem sikerült azonosítani az e-mail címet, vagy már leiratkoztál.
+                        </p>
+                        <button class="btn btn-primary rounded-pill px-4" @onclick='() => Nav.NavigateTo("/")'>
+                            Vissza a főoldalra
+                        </button>
+                    }
+
+                </div>
+                @if (isSuccess)
+                {
+                    <div class="card-footer bg-light p-3 text-center border-0 small text-muted">
+                        Meggondoltad magad? Bármikor feliratkozhatsz újra az oldal alján, illetve a profilodban.
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? Email { get; set; }
+
+    private bool isLoading = true;
+    private bool isSuccess = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 1. Ellenőrizzük, hogy van-e email paraméter
+        if (string.IsNullOrWhiteSpace(Email))
+        {
+            isLoading = false;
+            isSuccess = false;
+            return;
+        }
+
+        try
+        {
+            // 2. Meghívjuk a már létező logikát
+            // (Ez kezeli a vendéglistát és a regisztrált user flag-et is)
+            await NewsletterService.UnsubscribeAsync(Email);
+
+            // Mesterséges késleltetés a jobb UX élményért (hogy lássa a spinnert)
+            await Task.Delay(800);
+
+            isSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Leiratkozási hiba: {ex.Message}");
+            isSuccess = false;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

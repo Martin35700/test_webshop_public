@@ -1,0 +1,479 @@
+﻿@page "/admin"
+@using Microsoft.EntityFrameworkCore
+@using webshop.Data
+@using webshop.Models
+@using webshop.Services
+@using System.Text
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Nav
+@inject SettingsService Settings
+@inject IJSRuntime JS
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+
+<PageTitle>Admin Vezérlőpult | Modern Webshop</PageTitle>
+
+<div class="container-fluid py-4 px-lg-5">
+    @* --- FEJLÉC --- *@
+    <div class="d-flex justify-content-between align-items-center mb-5">
+        <div>
+            <h1 class="fw-bold mb-1">Vezérlőpult</h1>
+            <p class="text-muted">Üdvözöljük újra! Itt láthatja a webshop aktuális állapotát és statisztikáit.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary shadow-sm rounded-pill px-4" @onclick='() => Nav.NavigateTo("/admin/products")'>
+                <i class="bi bi-plus-lg me-2"></i>Új termék
+            </button>
+            <button class="btn btn-outline-dark shadow-sm rounded-pill px-4" @onclick="RefreshStats">
+                <i class="bi bi-arrow-clockwise me-2"></i>Frissítés
+            </button>
+        </div>
+    </div>
+
+    @* --- STATISZTIKAI KÁRTYÁK --- *@
+    <div class="row g-4 mb-5">
+        <div class="col-md-4 col-xl-2">
+            <div class="stat-card p-4 rounded-4 shadow-sm border-0 bg-white border-start border-primary border-5 h-100">
+                <h6 class="text-muted text-uppercase small fw-bold">Napi bevétel</h6>
+                <h3 class="fw-bold mb-0">@dailyRevenue.ToString("N0") Ft</h3>
+            </div>
+        </div>
+        <div class="col-md-4 col-xl-2">
+            <div class="stat-card p-4 rounded-4 shadow-sm border-0 bg-white border-start border-success border-5 h-100">
+                <h6 class="text-muted text-uppercase small fw-bold">Új rendelések</h6>
+                <h3 class="fw-bold mb-0">@newOrdersCount db</h3>
+            </div>
+        </div>
+        <div class="col-md-4 col-xl-2">
+            <div class="stat-card p-4 rounded-4 shadow-sm border-0 bg-white border-start border-warning border-5 h-100">
+                <h6 class="text-muted text-uppercase small fw-bold">Készlethiány</h6>
+                <h3 class="fw-bold mb-0">@lowStockCount db</h3>
+            </div>
+        </div>
+        <div class="col-md-4 col-xl-3">
+            <div class="stat-card p-4 rounded-4 shadow-sm border-0 bg-white border-start border-danger border-5 h-100"
+                 style="cursor: pointer;" @onclick='() => Nav.NavigateTo("/admin/reviews")'>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted text-uppercase small fw-bold">Új vélemények</h6>
+                        <h3 class="fw-bold mb-0 @(pendingReviewsCount > 0 ? "text-danger" : "")">@pendingReviewsCount db</h3>
+                    </div>
+                    <div class="icon-box @(pendingReviewsCount > 0 ? "bg-danger text-white" : "bg-light text-muted") rounded-3 shadow-sm">
+                        <i class="bi bi-chat-left-dots fs-4"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 col-xl-3">
+            <div class="stat-card p-4 rounded-4 shadow-sm border-0 bg-white border-start border-info border-5 h-100">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted text-uppercase small fw-bold">Összes vásárló</h6>
+                        <h3 class="fw-bold mb-0">@totalCustomers db</h3>
+                    </div>
+                    <div class="icon-box bg-info-subtle text-info rounded-3">
+                        <i class="bi bi-people fs-4"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* --- GRAFIKONOK SZEKCIÓ --- *@
+    <div class="row g-4 mb-5">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm rounded-4 p-4">
+                <h5 class="fw-bold mb-4">Értékesítési trend (Utolsó 7 nap)</h5>
+                <div style="height: 300px;">
+                    <canvas id="salesChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                <h5 class="fw-bold mb-4">Bevétel kategóriánként</h5>
+                <div style="height: 300px;" class="d-flex align-items-center justify-content-center">
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        @* --- BAL OSZLOP: RENDELÉSEK ÉS NAPLÓ --- *@
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm rounded-4 mb-4">
+                <div class="card-header bg-white py-3 border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="fw-bold m-0">Legutóbbi rendelések</h5>
+                    <button class="btn btn-sm btn-link text-decoration-none text-primary fw-bold" @onclick='() => Nav.NavigateTo("/admin/orders")'>Összes rendelés <i class="bi bi-chevron-right"></i></button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th class="ps-4">ID</th>
+                                    <th>Vásárló</th>
+                                    <th>Összeg</th>
+                                    <th>Állapot</th>
+                                    <th class="text-end pe-4">Művelet</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var order in latestOrders)
+                                {
+                                    <tr>
+                                        <td class="ps-4">#@order.Id</td>
+                                        <td class="fw-bold">@order.CustomerName</td>
+                                        <td>@order.TotalAmount.ToString("N0") Ft</td>
+                                        <td><span class="badge rounded-pill @GetStatusClass(order.Status)">@order.Status</span></td>
+                                        <td class="text-end pe-4">
+                                            <button class="btn btn-sm btn-outline-secondary rounded-circle" @onclick='() => Nav.NavigateTo($"/admin/order/{order.Id}")'><i class="bi bi-eye"></i></button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm rounded-4 mb-4">
+                <div class="card-header bg-white py-3 border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="fw-bold m-0">Legutóbbi készletmozgások</h5>
+                    <button class="btn btn-sm btn-success rounded-pill px-3 shadow-sm" @onclick="DownloadStockLogCsv" disabled="@isCsvLoading">
+                        @if (isCsvLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                            <span>Generálás...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-file-earmark-spreadsheet me-2"></i>
+                            <span>CSV letöltése</span>
+                        }
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="bg-light sticky-top">
+                                <tr>
+                                    <th class="ps-4">Termék</th>
+                                    <th class="text-center">Változás</th>
+                                    <th class="text-center">Új készlet</th>
+                                    <th class="text-center">Időpont</th>
+                                    <th class="text-center pe-4">Megjegyzés</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var log in recentStockLogs)
+                                {
+                                    <tr>
+                                        <td class="ps-4 small fw-bold">@log.Product?.Name</td>
+                                        <td class="text-center">
+                                            <span class="badge @(log.ChangeAmount > 0 ? "bg-success-subtle text-success" : "bg-danger-subtle text-danger")">
+                                                @(log.ChangeAmount > 0 ? "+" : "")@log.ChangeAmount
+                                            </span>
+                                        </td>
+                                        <td class="text-center small">@log.ResultStock</td>
+                                        <td class="text-end pe-4 small text-muted">@log.Date.ToString("MM.dd. HH:mm")</td>
+                                        <td class="small text-muted italic">@log.Reason</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* --- JOBB OSZLOP: GYORS ELÉRÉS, BEÁLLÍTÁSOK ÉS KÉSZLETHIÁNY --- *@
+        <div class="col-lg-4">
+            @* GYORS MŰVELETEK *@
+            <div class="card border-0 shadow-sm rounded-4 mb-4">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Gyors műveletek</h5>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/products")'>
+                            <i class="bi bi-box-seam me-2 text-primary"></i> Termékek kezelése
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/categories")'>
+                            <i class="bi bi-tags me-2 text-secondary"></i> Termékkategóriák kezelése
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/reviews")'>
+                            <i class="bi bi-chat-left-quote me-2 text-info"></i> Vélemények moderálása
+                            @if (pendingReviewsCount > 0)
+                            {
+                                <span class="badge bg-danger ms-2">@pendingReviewsCount</span>
+                            }
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/coupons")'>
+                            <i class="bi bi-ticket-perforated me-2 text-warning"></i> Kuponok kezelése
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/accounting")'>
+                            <i class="bi bi-calculator me-2 text-danger"></i> Könyvelési riportok
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/users")'>
+                            <i class="bi bi-people-fill me-2 text-success"></i>Felhasználó kezelés
+                        </button>
+                        <button class="btn btn-light border text-start py-2 rounded-3" @onclick='() => Nav.NavigateTo("/admin/newsletter")'>
+                            <i class="bi bi-envelope-paper me-2 text"</i>Hírlevél
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @* BOLT BEÁLLÍTÁSAI *@
+            <div class="card border-0 shadow-sm rounded-4 mb-4">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-gear-fill me-2 text-secondary"></i>Bolt beállításai</h5>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Ingyenes szállítási limit (Ft)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" @bind="freeLimit" />
+                            <span class="input-group-text">Ft</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Alap szállítási díj (Ft)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" @bind="shippingFee" />
+                            <span class="input-group-text">Ft</span>
+                        </div>
+                    </div>
+
+                    <hr class="my-3 text-muted opacity-25">
+
+                    @* --- SZÁLLÍTÁSI IDŐK --- *@
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-success"><i class="bi bi-box-seam me-1"></i>Szállítási idő (Raktáron)</label>
+                        <input type="text" class="form-control form-control-sm" @bind="deliveryTime" placeholder="pl: 2-4 munkanap" />
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label small fw-bold text-warning"><i class="bi bi-clock-history me-1"></i>Szállítási idő (Beszerzés alatt)</label>
+                        <input type="text" class="form-control form-control-sm" @bind="backorderDeliveryTime" placeholder="pl: 5-10 munkanap" />
+                        <div class="form-text small" style="font-size: 0.75rem;">Akkor jelenik meg, ha a termék "Rendelésre" státuszban van.</div>
+                    </div>
+
+                    <button class="btn btn-dark w-100 rounded-pill fw-bold py-2 shadow-sm" @onclick="SaveSettings">BEÁLLÍTÁSOK MENTÉSE</button>
+                    @if (settingsSaved)
+                    {
+                        <div class="text-success small text-center mt-2 animate-fade">Sikeresen mentve!</div>
+                    }
+                </div>
+            </div>
+
+            @* ALACSONY KÉSZLET FIGYELMEZTETÉS *@
+            @if (lowStockProducts.Any())
+            {
+                <div class="card border-0 shadow-sm rounded-4 bg-danger-subtle border-start border-danger border-5">
+                    <div class="card-body">
+                        <h5 class="fw-bold text-danger mb-3 small text-uppercase"><i class="bi bi-exclamation-triangle-fill me-2"></i>Kritikus készlet</h5>
+                        @foreach (var p in lowStockProducts)
+                        {
+                            <div class="d-flex justify-content-between align-items-center mb-2 small p-2 bg-white bg-opacity-50 rounded-3">
+                                <span class="text-truncate fw-bold" style="max-width: 150px;">@p.Name</span>
+                                <span class="badge bg-danger">@p.Stock db</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .stat-card {
+        transition: transform 0.2s;
+    }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+    .icon-box {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .animate-fade {
+        animation: fadeOut 2s forwards;
+    }
+
+    @@keyframes fadeOut {
+        0%, 70% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0;
+        }
+    }
+</style>
+
+@* --- SCRIPT A LETÖLTÉSHEZ --- *@
+<script>
+    window.downloadCsvFile = (fileName, contentType, content) => {
+        // UTF-8 BOM a Excel kompatibilitásért
+        const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), content], { type: contentType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+</script>
+
+@code {
+    private decimal dailyRevenue;
+    private int newOrdersCount;
+    private int lowStockCount;
+    private int totalCustomers;
+    private int pendingReviewsCount;
+    private List<Order> latestOrders = new();
+    private List<Product> lowStockProducts = new();
+    private List<StockLog> recentStockLogs = new();
+
+    private decimal freeLimit;
+    private decimal shippingFee;
+    private string deliveryTime = "";
+    private string backorderDeliveryTime = ""; // ÚJ VÁLTOZÓ
+    private bool settingsSaved = false;
+    private bool isCsvLoading = false;
+
+    private decimal[] salesChartData = Array.Empty<decimal>();
+    private string[] salesChartLabels = Array.Empty<string>();
+    private decimal[] categoryChartData = Array.Empty<decimal>();
+    private string[] categoryChartLabels = Array.Empty<string>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSettings();
+        await RefreshStats();
+    }
+
+    private async Task LoadSettings()
+    {
+        await Settings.LoadSettingsAsync();
+        freeLimit = Settings.GetDecimal("FreeShippingLimit", 20000);
+        shippingFee = Settings.GetDecimal("ShippingFee", 1990);
+        deliveryTime = Settings.GetString("DeliveryTime", "2-4 munkanap");
+        backorderDeliveryTime = Settings.GetString("BackorderDeliveryTime", "5-10 munkanap"); // ÚJ BETÖLTÉS
+    }
+
+    private async Task SaveSettings()
+    {
+        await Settings.UpdateSettingAsync("FreeShippingLimit", freeLimit.ToString());
+        await Settings.UpdateSettingAsync("ShippingFee", shippingFee.ToString());
+        await Settings.UpdateSettingAsync("DeliveryTime", deliveryTime);
+        await Settings.UpdateSettingAsync("BackorderDeliveryTime", backorderDeliveryTime); // ÚJ MENTÉS
+        settingsSaved = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        settingsSaved = false;
+        StateHasChanged();
+    }
+
+    private async Task RefreshStats()
+    {
+        using var context = DbFactory.CreateDbContext();
+        var today = DateTime.Today;
+        var startOfWeek = today.AddDays(-6);
+
+        dailyRevenue = await context.Orders
+            .Where(o => o.OrderDate >= today && o.Status != OrderStatus.Lemondva)
+            .SumAsync(o => o.TotalAmount);
+
+        newOrdersCount = await context.Orders.Where(o => o.OrderDate >= today).CountAsync();
+        lowStockProducts = await context.Products.Where(p => p.Stock < 5 && p.IsActive).Take(5).ToListAsync();
+        lowStockCount = await context.Products.CountAsync(p => p.Stock < 5 && p.IsActive);
+        totalCustomers = await context.Orders.Select(o => o.Email).Distinct().CountAsync();
+        latestOrders = await context.Orders.OrderByDescending(o => o.OrderDate).Take(5).ToListAsync();
+        pendingReviewsCount = await context.ProductReviews.CountAsync(r => !r.IsApproved);
+        recentStockLogs = await context.StockLogs.Include(l => l.Product).OrderByDescending(l => l.Date).ToListAsync();
+
+        var salesTrendRaw = await context.Orders
+            .Where(o => o.OrderDate >= startOfWeek && o.Status != OrderStatus.Lemondva)
+            .GroupBy(o => o.OrderDate.Date)
+            .Select(g => new { Date = g.Key, Total = g.Sum(o => o.TotalAmount) })
+            .ToListAsync();
+
+        var dateRange = Enumerable.Range(0, 7).Select(i => startOfWeek.AddDays(i)).ToList();
+        salesChartLabels = dateRange.Select(d => d.ToString("MM.dd.")).ToArray();
+        salesChartData = dateRange.Select(d => salesTrendRaw.FirstOrDefault(s => s.Date == d)?.Total ?? 0).ToArray();
+
+        var categoryDataRaw = await context.OrderItems
+            .Include(i => i.Product).ThenInclude(p => p.Category)
+            .Where(i => i.Order.Status != OrderStatus.Lemondva)
+            .GroupBy(i => i.Product.Category.Name)
+            .Select(g => new { Name = g.Key, Value = g.Sum(i => i.Price * i.Quantity) })
+            .ToListAsync();
+
+        categoryChartLabels = categoryDataRaw.Select(c => c.Name).ToArray();
+        categoryChartData = categoryDataRaw.Select(c => c.Value).ToArray();
+    }
+
+    private async Task DownloadStockLogCsv()
+    {
+        isCsvLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            using var context = DbFactory.CreateDbContext();
+            var allLogs = await context.StockLogs
+                .Include(l => l.Product)
+                .OrderByDescending(l => l.Date)
+                .ToListAsync();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Dátum;Termék;Változás;Új készlet;Megjegyzés");
+
+            foreach (var log in allLogs)
+            {
+                var productName = log.Product?.Name ?? "Törölt termék";
+                productName = productName.Replace(";", ",");
+                var reason = log.Reason?.Replace(";", ",") ?? "";
+
+                sb.AppendLine($"{log.Date:yyyy-MM-dd HH:mm};{productName};{log.ChangeAmount};{log.ResultStock};{reason}");
+            }
+
+            var fileName = $"készletnaplo_{DateTime.Now:yyyyMMdd_HHmm}.csv";
+            await JS.InvokeVoidAsync("downloadCsvFile", fileName, "text/csv;charset=utf-8", sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"CSV hiba: {ex.Message}");
+        }
+        finally
+        {
+            isCsvLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && salesChartData.Any())
+        {
+            await JS.InvokeVoidAsync("setupSalesChart", "salesChart", salesChartLabels, salesChartData);
+            await JS.InvokeVoidAsync("setupCategoryChart", "categoryChart", categoryChartLabels, categoryChartData);
+        }
+    }
+
+    private string GetStatusClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Feldolgozatlan => "bg-primary-subtle text-primary",
+        OrderStatus.Teljesítve => "bg-success-subtle text-success",
+        OrderStatus.Lemondva => "bg-danger-subtle text-danger",
+        _ => "bg-light text-dark border"
+    };
+}

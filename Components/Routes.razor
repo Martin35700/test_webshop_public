@@ -1,0 +1,16 @@
+﻿<Router AppAssembly="@typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <PageTitle>Nem található</PageTitle>
+        <LayoutView Layout="@typeof(Layout.MainLayout)">
+            <div class="container py-5 text-center">
+                <h1>Hoppá!</h1>
+                <p role="alert">Sajnos ezen a címen nem találtunk semmit.</p>
+                <a href="/" class="btn btn-primary">Vissza a főoldalra</a>
+            </div>
+        </LayoutView>
+    </NotFound>
+</Router>

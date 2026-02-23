@@ -1,0 +1,802 @@
+﻿@page "/Account/Profile"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@using webshop.Data
+@using webshop.Models
+@using webshop.Services
+@using System.IO
+@using System.ComponentModel.DataAnnotations
+@using System.Text.RegularExpressions
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject AuthenticationStateProvider GetAuthenticationStateProvider
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager NavigationManager
+@inject PdfService PdfService
+@inject NewsletterService NewsletterService
+@inject IJSRuntime JS
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+<div class="container py-5">
+    <div class="row g-4">
+        <div class="col-lg-4">
+            @* Felhasználói kártya *@
+            <div class="card border-0 shadow-sm rounded-4 p-4 text-center mb-4">
+                <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px; margin: 0 auto;">
+                    <i class="bi bi-person-fill fs-1 text-primary"></i>
+                </div>
+                <h4 class="fw-bold">@currentUser?.FullName</h4>
+                <p class="text-muted mb-4">@currentUser?.Email</p>
+                <hr />
+                <div class="list-group list-group-flush text-start">
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 mb-2 @(activeTab == "details" ? "active" : "")"
+                            @onclick='() => { activeTab = "details"; ResetMsgs(); SyncInputModel(); }'>
+                        <i class="bi bi-gear-fill me-2"></i> Adatok szerkesztése
+                    </button>
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 mb-2 @(activeTab == "orders" ? "active" : "")"
+                            @onclick='() => { activeTab = "orders"; ResetMsgs(); }'>
+                        <i class="bi bi-bag-check-fill me-2"></i> Korábbi rendelések
+                    </button>
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 mb-2 @(activeTab == "reviews" ? "active" : "")"
+                            @onclick='() => { activeTab = "reviews"; ResetMsgs(); LoadUserReviews(); }'>
+                        <i class="bi bi-star-fill me-2 text-warning"></i> Véleményeim
+                    </button>
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 mb-2 @(activeTab == "newsletter" ? "active" : "")"
+                            @onclick='() => { activeTab = "newsletter"; ResetMsgs(); }'>
+                        <i class="bi bi-envelope-paper-heart-fill me-2 text-info"></i> Hírlevél beállítások
+                    </button>
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 mb-2 @(activeTab == "password" ? "active" : "")"
+                            @onclick='() => { activeTab = "password"; ResetMsgs(); }'>
+                        <i class="bi bi-shield-lock-fill me-2"></i> Jelszó módosítása
+                    </button>
+                    <button class="list-group-item list-group-item-action border-0 rounded-3 text-danger mt-4 @(activeTab == "delete" ? "bg-danger text-white" : "")"
+                            @onclick='() => { activeTab = "delete"; ResetMsgs(); }'>
+                        <i class="bi bi-person-x-fill me-2"></i> Fiók törlése
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            @if (activeTab == "details")
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 animate__animated animate__fadeIn">
+                    <EditForm Model="ProfileInput" OnValidSubmit="UpdateProfile">
+                        <DataAnnotationsValidator />
+
+                        <h5 class="fw-bold mb-4 text-dark border-bottom pb-2">Személyes és Szállítási adatok</h5>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Teljes név (Nem módosítható)</label>
+                                <input type="text" class="form-control bg-light border-0 py-2" value="@currentUser?.FullName" readonly />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Telefonszám</label>
+                                <InputText class="form-control py-2" @bind-Value="ProfileInput.PhoneNumber" placeholder="+36 30 123 4567" />
+                                <ValidationMessage For="@(() => ProfileInput.PhoneNumber)" class="text-danger small" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Irányítószám</label>
+                                <InputText class="form-control py-2" @bind-Value="ProfileInput.Zip" />
+                                <ValidationMessage For="@(() => ProfileInput.Zip)" class="text-danger small" />
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Város</label>
+                                <InputText class="form-control py-2" @bind-Value="ProfileInput.City" />
+                                <ValidationMessage For="@(() => ProfileInput.City)" class="text-danger small" />
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small fw-bold text-muted text-uppercase">Utca, házszám</label>
+                                <InputText class="form-control py-2" @bind-Value="ProfileInput.Address" />
+                                <ValidationMessage For="@(() => ProfileInput.Address)" class="text-danger small" />
+                            </div>
+                        </div>
+
+                        <div class="d-flex align-items-center justify-content-between mb-4 border-bottom pb-2 mt-2">
+                            <h5 class="fw-bold text-dark m-0">Számlázási adatok</h5>
+                            <div class="form-check form-switch m-0">
+                                <InputCheckbox @bind-Value="ProfileInput.BillingSameAsShipping" class="form-check-input" id="billingCheck" style="cursor: pointer;" />
+                                <label class="form-check-label small fw-bold text-muted text-uppercase" for="billingCheck" style="cursor: pointer;">Megegyezik a szállítási címmel</label>
+                            </div>
+                        </div>
+
+                        @if (!ProfileInput.BillingSameAsShipping)
+                        {
+                            <div class="row g-3 animate__animated animate__fadeIn">
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold text-muted text-uppercase">Számlázási Irányítószám</label>
+                                    <InputText class="form-control py-2" @bind-Value="ProfileInput.BillingZip" />
+                                    <ValidationMessage For="@(() => ProfileInput.BillingZip)" class="text-danger small" />
+                                </div>
+                                <div class="col-md-8">
+                                    <label class="form-label small fw-bold text-muted text-uppercase">Számlázási Város</label>
+                                    <InputText class="form-control py-2" @bind-Value="ProfileInput.BillingCity" />
+                                    <ValidationMessage For="@(() => ProfileInput.BillingCity)" class="text-danger small" />
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label small fw-bold text-muted text-uppercase">Számlázási Cím</label>
+                                    <InputText class="form-control py-2" @bind-Value="ProfileInput.BillingAddress" />
+                                    <ValidationMessage For="@(() => ProfileInput.BillingAddress)" class="text-danger small" />
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="alert alert-light border-0 small text-muted rounded-4 animate__animated animate__fadeIn">
+                                <i class="bi bi-info-circle me-2"></i>A rendszer mentéskor automatikusan a fenti szállítási címet fogja számlázási címként is rögzíteni.
+                            </div>
+                        }
+
+                        <div class="col-12 mt-4 d-flex align-items-center gap-3">
+                            <button type="submit" class="btn btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm">
+                                Módosítások mentése
+                            </button>
+                            @if (showSaveSuccess)
+                            {
+                                <span class="text-success animate__animated animate__fadeIn">
+                                    <i class="bi bi-check-circle-fill me-1"></i> Sikeresen mentve!
+                                </span>
+                            }
+                        </div>
+                    </EditForm>
+                </div>
+            }
+            else if (activeTab == "reviews")
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 animate__animated animate__fadeIn">
+                    <h5 class="fw-bold mb-4">Eddigi értékeléseim</h5>
+                    @if (userReviews == null)
+                    {
+                        <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+                    }
+                    else if (!userReviews.Any())
+                    {
+                        <div class="text-center py-5">
+                            <i class="bi bi-chat-left-dots fs-1 text-muted opacity-25"></i>
+                            <p class="text-muted mt-2">Még nem értékeltél egyetlen terméket sem.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row g-3">
+                            @foreach (var review in userReviews)
+                            {
+                                <div class="col-12">
+                                    <div class="card border-light rounded-4 p-3 shadow-sm">
+                                        <div class="d-flex justify-content-between align-items-start mb-2">
+                                            <div>
+                                                <h6 class="fw-bold mb-0">@review.Product?.Name</h6>
+                                                <div class="text-warning small">
+                                                    @for (int i = 1; i <= 5; i++)
+                                                    {
+                                                        <i class="bi @(i <= review.Rating ? "bi-star-fill" : "bi-star")"></i>
+                                                    }
+                                                </div>
+                                            </div>
+                                            @if (!review.IsApproved)
+                                            {
+                                                <span class="badge bg-warning text-dark rounded-pill small">Moderálásra vár</span>
+                                            }
+                                        </div>
+                                        <p class="small text-muted mb-3">@review.Comment</p>
+                                        <div class="d-flex gap-2">
+                                            <button class="btn btn-sm btn-outline-dark rounded-pill px-3" @onclick="() => StartEditingReview(review)">
+                                                <i class="bi bi-pencil-square me-1"></i> Szerkesztés
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger rounded-pill px-3" @onclick="() => DeleteReview(review)">
+                                                <i class="bi bi-trash me-1"></i> Törlés
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else if (activeTab == "newsletter")
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 animate__animated animate__fadeIn">
+                    <h5 class="fw-bold mb-4 text-dark">Hírlevél kezelése</h5>
+                    @if (currentUser != null)
+                    {
+                        <div class="d-flex align-items-center justify-content-between bg-light p-4 rounded-4 mb-3">
+                            <div>
+                                <h6 class="fw-bold mb-1"><i class="bi bi-envelope-paper me-2 text-primary"></i>Hírlevél feliratkozás</h6>
+                                <p class="text-muted small mb-0">Értesülj elsőként az egyedi kuponokról és akciókról.</p>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" style="width: 3em; height: 1.5em; cursor: pointer;"
+                                       checked="@currentUser.IsNewsletterSubscribed"
+                                       @onchange="ToggleNewsletter">
+                            </div>
+                        </div>
+
+                        <div class="text-center">
+                            @if (currentUser.IsNewsletterSubscribed)
+                            {
+                                <span class="badge bg-success-subtle text-success border border-success px-3 py-2 rounded-pill animate__animated animate__fadeIn">
+                                    <i class="bi bi-check-circle-fill me-1"></i> Feliratkozva
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary-subtle text-secondary border px-3 py-2 rounded-pill animate__animated animate__fadeIn">
+                                    <i class="bi bi-dash-circle me-1"></i> Leiratkozva
+                                </span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else if (activeTab == "password")
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 animate__animated animate__fadeIn">
+                    <h5 class="fw-bold mb-4 text-dark">Biztonság - Jelszó módosítása</h5>
+                    <div class="row g-3" style="max-width: 450px;">
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-muted text-uppercase">Jelenlegi jelszó</label>
+                            <input type="password" class="form-control py-2" @bind="currentPassword" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-muted text-uppercase">Új jelszó</label>
+                            <input type="password" class="form-control py-2" @bind="newPassword" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-muted text-uppercase">Új jelszó megerősítése</label>
+                            <input type="password" class="form-control py-2" @bind="confirmPassword" />
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(passwordErrorMessage))
+                        {
+                            <div class="col-12">
+                                <div class="alert alert-danger py-2 small border-0 rounded-3 mb-0">
+                                    <i class="bi bi-exclamation-circle me-2"></i>@passwordErrorMessage
+                                </div>
+                            </div>
+                        }
+
+                        <div class="col-12 mt-4 d-flex align-items-center gap-3">
+                            <button class="btn btn-dark rounded-pill px-4 py-2 fw-bold shadow-sm" @onclick="ChangePassword">
+                                Jelszó frissítése
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else if (activeTab == "delete")
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 border-start border-danger border-5 animate__animated animate__fadeIn">
+                    <h5 class="fw-bold text-danger mb-3">Fiók végleges törlése</h5>
+                    <p class="text-muted small mb-4">
+                        A GDPR szabályozás értelmében joga van kérni adatai törlését.
+                        A törlés során fiókja és minden személyes adata megsemmisül, a számviteli adatokon kívül.
+                        <p class="text-danger"><b>Figyelem!</b> Addig ne törölje fiókját ameddig van aktív, nem teljesített rendelése, más különben nem biztosan kapja meg csomagját!</p>
+                    </p>
+                    <button class="btn btn-danger rounded-pill px-4 fw-bold" @onclick="() => showDeleteModal = true">
+                        Fiókom törlése most
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="card border-0 shadow-sm rounded-4 p-4 animate__animated animate__fadeIn">
+                    <h5 class="fw-bold mb-4">Korábbi rendeléseim</h5>
+                    @if (userOrders == null)
+                    {
+                        <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+                    }
+                    else if (!userOrders.Any())
+                    {
+                        <div class="text-center py-5">
+                            <i class="bi bi-cart-x fs-1 text-muted opacity-50"></i>
+                            <p class="mt-3 text-muted">Még nem volt egyetlen rendelésed sem.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="bg-light">
+                                    <tr>
+                                        <th class="border-0">#ID</th>
+                                        <th class="border-0">Dátum</th>
+                                        <th class="border-0">Összeg</th>
+                                        <th class="border-0 text-center">Állapotok</th>
+                                        <th class="border-0 text-end">Műveletek</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var order in userOrders)
+                                    {
+                                        <tr>
+                                            <td class="fw-bold">@order.Id</td>
+                                            <td class="small text-muted">@order.OrderDate.ToString("yyyy.MM.dd.")</td>
+                                            <td class="fw-bold text-primary">@order.TotalAmount.ToString("N0") Ft</td>
+                                            <td class="text-center">
+                                                <div class="d-flex flex-column gap-1 align-items-center">
+                                                    <span class="badge rounded-pill px-3 py-1 @GetStatusClass(order.Status)">@GetStatusDisplayName(order.Status)</span>
+                                                    <span class="badge @GetPaymentClass(order.PaymentStatus)" style="font-size: 0.65rem; letter-spacing: 0.5px;">
+                                                        @order.PaymentStatus.ToString().ToUpper()
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td class="text-end">
+                                                <div class="btn-group shadow-sm">
+                                                    <button class="btn btn-sm btn-outline-primary px-3" title="Követés" @onclick='() => NavigationManager.NavigateTo($"/track-order/{(order.SecretToken)}")'><i class="bi bi-truck"></i></button>
+                                                    <button class="btn btn-sm btn-outline-dark px-3" title="Részletek" @onclick="() => ShowOrderDetails(order)"><i class="bi bi-eye"></i></button>
+                                                    <button class="btn btn-sm btn-outline-danger px-3" title="Számla" @onclick="() => DownloadInvoice(order)"><i class="bi bi-file-earmark-pdf"></i></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@* RENDELÉS RÉSZLETEI MODAL *@
+@if (selectedOrder != null)
+{
+    <div class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.6); z-index: 1050;">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="fw-bold m-0">Rendelés részletei: #@selectedOrder.Id</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="row g-4 mb-4">
+                        <div class="col-md-4 border-end">
+                            <label class="small text-muted text-uppercase fw-bold">Szállítási cím</label>
+                            <div class="bg-light p-3 rounded-4 mt-1 h-100">
+                                <p class="mb-0 fw-bold">@selectedOrder.CustomerName</p>
+                                <p class="mb-0 small text-muted">@selectedOrder.Zip @selectedOrder.City</p>
+                                <p class="mb-0 small text-muted">@selectedOrder.Address</p>
+                                <p class="mb-0 small text-muted mt-2"><i class="bi bi-telephone me-1"></i> @selectedOrder.PhoneNumber</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4 border-end">
+                            <label class="small text-muted text-uppercase fw-bold">Számlázási cím</label>
+                            <div class="bg-light p-3 rounded-4 mt-1 h-100">
+                                <p class="mb-0 fw-bold">@selectedOrder.CustomerName</p>
+                                <p class="mb-0 small text-muted">@selectedOrder.BillingZip @selectedOrder.BillingCity</p>
+                                <p class="mb-0 small text-muted">@selectedOrder.BillingAddress</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="small text-muted text-uppercase fw-bold">Rendelés adatai</label>
+                            <div class="bg-light p-3 rounded-4 mt-1 h-100">
+                                <p class="mb-1 small"><strong>Státusz:</strong> <span class="badge @GetStatusClass(selectedOrder.Status)">@GetStatusDisplayName(selectedOrder.Status)</span></p>
+                                <p class="mb-1 small"><strong>Fizetés:</strong> <span class="text-primary fw-bold">@selectedOrder.PaymentStatus</span></p>
+                                <p class="mb-0 small text-muted"><strong>Mód:</strong> @selectedOrder.PaymentMethod</p>
+                                <p class="mb-0 small text-muted mt-2">@selectedOrder.OrderDate.ToString("yyyy.MM.dd. HH:mm")</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <label class="small text-muted text-uppercase fw-bold mb-2">Megrendelt tételek</label>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead class="text-muted small">
+                                <tr><th>Termék</th><th class="text-end pe-4">Mennyiség</th><th class="text-end">Összeg</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in selectedOrder.Items)
+                                {
+                                    <tr>
+                                        <td class="py-2 small">@item.ProductName</td>
+                                        <td class="text-end pe-4 small">@item.Quantity db</td>
+                                        <td class="text-end fw-bold small">@((item.Price * item.Quantity).ToString("N0")) Ft</td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot class="border-top">
+                                @{
+                                    var itemsTotal = selectedOrder.Items.Sum(i => i.Price * i.Quantity);
+                                }
+                                <tr class="small text-muted"><td colspan="2" class="text-end pt-2">Részösszeg:</td><td class="text-end pt-2">@itemsTotal.ToString("N0") Ft</td></tr>
+                                @if (selectedOrder.DiscountAmount > 0)
+                                {
+                                    <tr class="small text-success fw-bold"><td colspan="2" class="text-end">Kedvezmény:</td><td class="text-end">-@selectedOrder.DiscountAmount.ToString("N0") Ft</td></tr>
+                                }
+                                <tr class="small text-muted"><td colspan="2" class="text-end border-0">Szállítás:</td><td class="text-end border-0">@(selectedOrder.ShippingFee > 0 ? $"{selectedOrder.ShippingFee:N0} Ft" : "Ingyenes")</td></tr>
+                                <tr class="h5 fw-bold text-primary"><td colspan="2" class="text-end pt-2">Végösszeg:</td><td class="text-end pt-2">@selectedOrder.TotalAmount.ToString("N0") Ft</td></tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0 justify-content-center pb-4">
+                    <button class="btn btn-light rounded-pill px-4" @onclick="CloseModal">Bezárás</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* VÉLEMÉNY SZERKESZTÉSE MODAL *@
+@if (editingReview != null)
+{
+    <div class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.6); z-index: 1100;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 rounded-4 shadow-lg">
+                <div class="modal-header">
+                    <h5 class="fw-bold">Értékelés szerkesztése</h5>
+                    <button type="button" class="btn-close" @onclick="() => editingReview = null"></button>
+                </div>
+                <div class="modal-body p-4 text-center">
+                    <h6 class="mb-3">@editingReview.Product?.Name</h6>
+                    <div class="fs-2 text-warning mb-3">
+                        @for (int i = 1; i <= 5; i++)
+                        {
+                            int star = i;
+                            <i class="bi @(star <= editingReview.Rating ? "bi-star-fill" : "bi-star")"
+                               style="cursor: pointer;" @onclick="() => editingReview.Rating = star"></i>
+                        }
+                    </div>
+                    <textarea class="form-control rounded-4 mb-3" rows="4" @bind="editingReview.Comment"></textarea>
+                </div>
+                <div class="modal-footer border-0">
+                    <button class="btn btn-light rounded-pill px-4" @onclick="() => editingReview = null">Mégse</button>
+                    <button class="btn btn-primary rounded-pill px-4 fw-bold" @onclick="SaveEditedReview">Módosítás mentése</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* TÖRLÉS MEGERŐSÍTŐ MODAL *@
+@if (showDeleteModal)
+{
+    <div class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.75); z-index: 1200; backdrop-filter: blur(4px);">
+        <div class="modal-dialog modal-dialog-centered" style="max-width: 400px;">
+            <div class="modal-content border-0 rounded-4 shadow-lg overflow-hidden">
+                <div class="p-4 text-center">
+                    <div class="text-danger mb-3"><i class="bi bi-exclamation-octagon" style="font-size: 3rem;"></i></div>
+                    <h4 class="fw-bold">Biztosan törli?</h4>
+                    <p class="text-muted small">Ezt a műveletet nem lehet visszavonni.</p>
+                    <div class="d-grid gap-2 mt-4">
+                        <button class="btn btn-danger rounded-pill fw-bold py-2 shadow-sm" @onclick="DeleteAccount">Igen, törlöm a fiókom</button>
+                        <button class="btn btn-light rounded-pill py-2" @onclick="() => showDeleteModal = false">Mégse</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private ApplicationUser? currentUser;
+    private ProfileUpdateModel ProfileInput = new();
+    private List<Order> userOrders = new();
+    private List<ProductReview> userReviews = new();
+    private ProductReview? editingReview;
+    private Order? selectedOrder;
+    private string activeTab = "details";
+    private bool showSaveSuccess = false;
+    private bool showDeleteModal = false;
+
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+    private string? passwordErrorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await GetAuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            currentUser = await UserManager.GetUserAsync(user);
+            SyncInputModel();
+            await LoadOrders();
+        }
+    }
+
+    private void SyncInputModel()
+    {
+        if (currentUser == null) return;
+        ProfileInput.PhoneNumber = currentUser.PhoneNumber ?? "";
+        ProfileInput.Zip = currentUser.Zip ?? "";
+        ProfileInput.City = currentUser.City ?? "";
+        ProfileInput.Address = currentUser.Address ?? "";
+        ProfileInput.BillingZip = currentUser.BillingZip ?? "";
+        ProfileInput.BillingCity = currentUser.BillingCity ?? "";
+        ProfileInput.BillingAddress = currentUser.BillingAddress ?? "";
+
+        // Logika a checkbox alaphelyzetbe állításához
+        ProfileInput.BillingSameAsShipping =
+            !string.IsNullOrWhiteSpace(currentUser.BillingAddress) &&
+            currentUser.BillingZip == currentUser.Zip &&
+            currentUser.BillingCity == currentUser.City &&
+            currentUser.BillingAddress == currentUser.Address;
+
+        // Ha üres a számlázási cím (új regisztrált), alapértelmezetten true
+        if (string.IsNullOrWhiteSpace(currentUser.BillingAddress)) ProfileInput.BillingSameAsShipping = true;
+    }
+
+    private async Task LoadOrders()
+    {
+        if (currentUser == null) return;
+        using var context = DbFactory.CreateDbContext();
+        userOrders = await context.Orders
+            .Where(o => o.UserId == currentUser.Id)
+            .Include(o => o.Items)
+            .OrderByDescending(o => o.OrderDate)
+            .ToListAsync();
+    }
+
+    private async Task LoadUserReviews()
+    {
+        if (currentUser == null) return;
+        using var context = DbFactory.CreateDbContext();
+        userReviews = await context.ProductReviews
+            .Include(r => r.Product)
+            .Where(r => r.UserId == currentUser.Id)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+    }
+
+    private void StartEditingReview(ProductReview review)
+    {
+        editingReview = new ProductReview
+        {
+            Id = review.Id,
+            ProductId = review.ProductId,
+            Product = review.Product,
+            Rating = review.Rating,
+            Comment = review.Comment,
+            UserId = review.UserId,
+            UserName = review.UserName
+        };
+    }
+
+    private async Task SaveEditedReview()
+    {
+        if (editingReview == null) return;
+        using var context = DbFactory.CreateDbContext();
+        var dbReview = await context.ProductReviews.FindAsync(editingReview.Id);
+        if (dbReview != null)
+        {
+            dbReview.Rating = editingReview.Rating;
+            dbReview.Comment = editingReview.Comment;
+            dbReview.IsApproved = false;
+            dbReview.CreatedAt = DateTime.Now;
+            await context.SaveChangesAsync();
+            editingReview = null;
+            await LoadUserReviews();
+            showSaveSuccess = true;
+            StateHasChanged();
+            await Task.Delay(3000);
+            showSaveSuccess = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteReview(ProductReview review)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Biztosan törölni szeretnéd ezt a véleményt?");
+        if (!confirmed) return;
+        using var context = DbFactory.CreateDbContext();
+        var dbReview = await context.ProductReviews.FindAsync(review.Id);
+        if (dbReview != null)
+        {
+            context.ProductReviews.Remove(dbReview);
+            await context.SaveChangesAsync();
+            await LoadUserReviews();
+        }
+    }
+
+    private async Task ToggleNewsletter()
+    {
+        if (currentUser == null) return;
+        currentUser.IsNewsletterSubscribed = !currentUser.IsNewsletterSubscribed;
+        var result = await UserManager.UpdateAsync(currentUser);
+        if (result.Succeeded)
+        {
+            showSaveSuccess = true;
+            StateHasChanged();
+            await Task.Delay(3000);
+            showSaveSuccess = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetMsgs()
+    {
+        passwordErrorMessage = null;
+        showSaveSuccess = false;
+        showDeleteModal = false;
+        editingReview = null;
+    }
+
+    private async Task UpdateProfile()
+    {
+        if (currentUser != null)
+        {
+            currentUser.PhoneNumber = ProfileInput.PhoneNumber;
+            currentUser.Zip = ProfileInput.Zip;
+            currentUser.City = ProfileInput.City;
+            currentUser.Address = ProfileInput.Address;
+
+            if (ProfileInput.BillingSameAsShipping)
+            {
+                currentUser.BillingZip = ProfileInput.Zip;
+                currentUser.BillingCity = ProfileInput.City;
+                currentUser.BillingAddress = ProfileInput.Address;
+            }
+            else
+            {
+                currentUser.BillingZip = ProfileInput.BillingZip;
+                currentUser.BillingCity = ProfileInput.BillingCity;
+                currentUser.BillingAddress = ProfileInput.BillingAddress;
+            }
+
+            var result = await UserManager.UpdateAsync(currentUser);
+            if (result.Succeeded)
+            {
+                showSaveSuccess = true;
+                StateHasChanged();
+                await Task.Delay(3000);
+                showSaveSuccess = false;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task ChangePassword()
+    {
+        passwordErrorMessage = null;
+        if (newPassword != confirmPassword) { passwordErrorMessage = "Az új jelszavak nem egyeznek!"; return; }
+        if (currentUser == null) return;
+        var result = await UserManager.ChangePasswordAsync(currentUser, currentPassword, newPassword);
+        if (result.Succeeded)
+        {
+            currentPassword = newPassword = confirmPassword = "";
+            showSaveSuccess = true;
+            StateHasChanged();
+            await Task.Delay(3000);
+            showSaveSuccess = false;
+            StateHasChanged();
+        }
+        else { passwordErrorMessage = string.Join(", ", result.Errors.Select(e => e.Description)); }
+    }
+
+    private async Task DeleteAccount()
+    {
+        if (currentUser == null)
+        {
+            return;
+        }
+
+        using var context = DbFactory.CreateDbContext();
+
+        // Lekérjük a felhasználó összes rendelését
+        var orders = await context.Orders
+            .Where(o => o.UserId == currentUser.Id)
+            .ToListAsync();
+
+        foreach (var order in orders)
+        {
+            // 1. A kapcsolatot megszüntetjük a felhasználóval
+            order.UserId = null;
+
+            // 2. SZÁLLÍTÁSI adatokat anonimizáljuk (GDPR)
+            // Ezek a fizikai helyszínre vonatkoznak, a teljesítés után kevésbé kritikusak
+            order.Address = "ANONIMIZÁLVA";
+            order.Zip = "0000";
+            order.City = "Törölt";
+            order.PhoneNumber = "N/A";
+
+            // 3. SZÁMLÁZÁSI adatokat MEGTARTJUK (Számviteli törvény / NAV)
+            // order.BillingName = order.BillingName; // Nem nyúlunk hozzá!
+            // order.BillingAddress = order.BillingAddress; // Nem nyúlunk hozzá!
+
+            // 4. Az emailt érdemes megtartani a rendelésben a visszakereshetőség miatt,
+            // de ha nagyon szigorú akarsz lenni, csak a számlázási nevet hagyd meg.
+            order.Email = "deleted_user@modernwebshop.hu";
+        }
+
+        await context.SaveChangesAsync();
+
+        // 5. A tényleges felhasználói fiók törlése (Személyes adatok, preferenciák törlődnek)
+        var result = await UserManager.DeleteAsync(currentUser);
+
+        if (result.Succeeded)
+        {
+            NavigationManager.NavigateTo("/Account/LogoutAction?returnUrl=/", forceLoad: true);
+        }
+    }
+
+    private void ShowOrderDetails(Order order) => selectedOrder = order;
+    private void CloseModal() => selectedOrder = null;
+
+    private async Task DownloadInvoice(Order order)
+    {
+        try
+        {
+            var pdfBytes = PdfService.GenerateOrderPdf(order);
+            var fileName = $"rendeles_{order.Id}.pdf";
+            using var stream = new MemoryStream(pdfBytes);
+            var dotNetStreamRef = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("downloadFileFromStream", fileName, dotNetStreamRef);
+        }
+        catch (Exception ex) { Console.WriteLine($"Hiba: {ex.Message}"); }
+    }
+
+    private string GetStatusClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Teljesítve => "bg-success text-white",
+        OrderStatus.Feldolgozva => "bg-info text-dark",
+        OrderStatus.SzállításAlatt => "bg-primary text-white",
+        OrderStatus.FeldolgozásAlatt => "bg-warning text-dark",
+        OrderStatus.Lemondva => "bg-danger text-white",
+        _ => "bg-secondary text-white"
+    };
+
+    private string GetStatusDisplayName(OrderStatus status) => status switch
+    {
+        OrderStatus.FeldolgozásAlatt => "Feldolgozás alatt",
+        OrderStatus.SzállításAlatt => "Szállítás alatt",
+        _ => status.ToString()
+    };
+
+    private string GetPaymentClass(PaymentStatus status) => status switch
+    {
+        PaymentStatus.Fizetve => "bg-success-subtle text-success",
+        _ => "bg-warning-subtle text-warning"
+    };
+
+    public class ProfileUpdateModel : IValidatableObject
+    {
+        [Required(ErrorMessage = "A telefonszám megadása kötelező.")]
+        [RegularExpression(@"^(\+?[0-9\s]{7,18})$", ErrorMessage = "Kérjük, érvényes formátumú telefonszámot adjon meg!")]
+        public string PhoneNumber { get; set; } = "";
+
+        [Required(ErrorMessage = "Az irányítószám megadása kötelező.")]
+        [RegularExpression(@"^[0-9]{4}$", ErrorMessage = "A magyar irányítószám 4 számjegyből áll.")]
+        public string Zip { get; set; } = "";
+
+        [Required(ErrorMessage = "A város megadása kötelező.")]
+        public string City { get; set; } = "";
+
+        [Required(ErrorMessage = "A cím megadása kötelező.")]
+        [MinLength(5, ErrorMessage = "Túl rövid cím.")]
+        public string Address { get; set; } = "";
+
+        public bool BillingSameAsShipping { get; set; } = true;
+
+        public string BillingZip { get; set; } = "";
+        public string BillingCity { get; set; } = "";
+        public string BillingAddress { get; set; } = "";
+
+        // Manuális kereszt-validáció a checkbox figyelembevételével
+        public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+        {
+            if (!BillingSameAsShipping)
+            {
+                if (string.IsNullOrWhiteSpace(BillingZip) || !Regex.IsMatch(BillingZip, @"^[0-9]{4}$"))
+                {
+                    yield return new ValidationResult("Érvényes számlázási irányítószám szükséges.", new[] { nameof(BillingZip) });
+                }
+                if (string.IsNullOrWhiteSpace(BillingCity))
+                {
+                    yield return new ValidationResult("A számlázási város megadása kötelező.", new[] { nameof(BillingCity) });
+                }
+                if (string.IsNullOrWhiteSpace(BillingAddress) || BillingAddress.Length < 5)
+                {
+                    yield return new ValidationResult("Érvényes számlázási cím szükséges.", new[] { nameof(BillingAddress) });
+                }
+            }
+        }
+    }
+}

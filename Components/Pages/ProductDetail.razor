@@ -1,0 +1,690 @@
+﻿@page "/product/{Id:int}"
+@page "/product/{Id:int}/{Slug}"
+@using Microsoft.EntityFrameworkCore
+@using System.Text.RegularExpressions
+@using System.Globalization
+@using webshop.Data
+@using webshop.Models
+@using webshop.Services
+@using webshop.Components
+@using Microsoft.AspNetCore.Components.Authorization
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject CartService CartService
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
+@inject SettingsService Settings
+@rendermode InteractiveServer
+
+<PageTitle>@(product?.Name ?? "Termék") - Modern Webshop</PageTitle>
+
+@* --- SEO BEÁLLÍTÁS --- *@
+@if (product != null)
+{
+    <webshop.Components.Shared.SeoEngine Title="@product.Name"
+                                         Description="@product.ShortDescription"
+                                         ImageUrl="@product.ImageUrl"
+                                         OgType="product"
+                                         Keywords="@($"{product.Name}, {product.Category?.Name ?? "webshop"}")"
+                                         SchemaJson="@GenerateProductSchema()" />
+}
+
+<div class="container py-5">
+    @if (product == null)
+    {
+        @if (isLoading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">Termék adatai betöltése...</p>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-warning rounded-4 border-0 shadow-sm text-center p-5">
+                <h3 class="fw-bold">A keresett termék nem található vagy inaktív.</h3>
+                <button class="btn btn-dark rounded-pill mt-3 px-4" @onclick='() => NavigationManager.NavigateTo("/")'>
+                    Vissza a főoldalra
+                </button>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <button class="btn btn-link text-dark p-0 text-decoration-none d-flex align-items-center gap-2"
+                    @onclick='() => NavigationManager.NavigateTo("/shop")'>
+                <i class="bi bi-arrow-left fs-4"></i> Vissza az összes termékhez
+            </button>
+        </div>
+
+        <div class="row g-5">
+            @* --- TERMÉK KÉPEK ÉS GALÉRIA --- *@
+            <div class="col-lg-6">
+                <div class="sticky-top" style="top: 100px;">
+                    @* --- FŐ KÉP (Lightbox-szal) --- *@
+                    <div class="card border-0 shadow-lg rounded-5 overflow-hidden mb-3">
+                        <div class="position-relative img-zoom-container" @onclick="OpenLightbox" style="cursor: zoom-in;">
+                            <img src="@selectedImageUrl" class="img-fluid w-100" alt="@product.Name"
+                                 style="max-height: 500px; object-fit: contain; background: #f8f9fa;" />
+
+                            <div class="position-absolute bottom-0 end-0 m-3 bg-white bg-opacity-75 rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width: 45px; height: 45px;">
+                                <i class="bi bi-search fs-5 text-dark"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    @* --- GALÉRIA BÉLYEGKÉPEK --- *@
+                    @if (product.GalleryImages != null && product.GalleryImages.Any())
+                    {
+                        <div class="d-flex gap-3 overflow-auto pb-2 custom-scrollbar">
+                            <div class="gallery-thumb @(selectedImageUrl == product.ImageUrl ? "active" : "")"
+                                 @onclick="() => selectedImageUrl = product.ImageUrl">
+                                <img src="@product.ImageUrl" alt="Fő kép" />
+                            </div>
+
+                            @foreach (var img in product.GalleryImages)
+                            {
+                                <div class="gallery-thumb @(selectedImageUrl == img.ImageUrl ? "active" : "")"
+                                     @onclick="() => selectedImageUrl = img.ImageUrl">
+                                    <img src="@img.ImageUrl" alt="Termék galéria kép" />
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @* --- TERMÉK ADATOK --- *@
+            <div class="col-lg-6">
+                <div class="ps-lg-4">
+                    <h1 class="display-5 fw-bold mb-1">@product.Name</h1>
+
+                    @* ÁTLAGOS ÉRTÉKELÉS *@
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <div class="fs-5">
+                            <StarRating Rating="averageRating" />
+                        </div>
+                        <span class="fw-bold ms-1">@averageRating.ToString("N1")</span>
+                        <span class="text-muted small">(@reviews.Count vélemény)</span>
+                    </div>
+
+                    <p class="text-muted fs-5 mb-4">@product.ShortDescription</p>
+
+                    <div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
+                        <span class="h1 fw-bold text-primary m-0">@product.Price.ToString("N0") Ft</span>
+
+                        @if (product.Stock > 0)
+                        {
+                            <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-3 py-2">
+                                <i class="bi bi-check2-circle me-1"></i> Raktáron (@product.Stock db)
+                            </span>
+                            <div class="small text-muted w-100 mt-1">
+                                <i class="bi bi-truck me-1"></i> Várható szállítás: <strong>@deliveryTime</strong>
+                            </div>
+                        }
+                        else if (!product.StrictStockControl)
+                        {
+                            <span class="badge bg-warning-subtle text-warning border border-warning-subtle rounded-pill px-3 py-2">
+                                <i class="bi bi-clock me-1"></i> Rendelésre
+                            </span>
+                            <div class="small text-muted w-100 mt-1">
+                                <i class="bi bi-info-circle me-1"></i> Várható beszerzés és szállítás: <strong>@backorderDeliveryTime</strong>
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-3 py-2">
+                                <i class="bi bi-x-circle me-1"></i> Elfogyott
+                            </span>
+                        }
+                    </div>
+
+                    @* KOSÁRBA HELYEZÉS BOX *@
+                    <div class="card bg-white border-0 rounded-4 p-4 mb-5 shadow-sm border-start border-5 @(product.StrictStockControl && product.Stock <= 0 ? "border-danger" : "border-primary")">
+                        <div class="row g-3 align-items-end">
+                            @if (product.StrictStockControl && product.Stock <= 0)
+                            {
+                                <div class="col-12 text-center py-2">
+                                    <h5 class="text-danger fw-bold m-0">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>Ez a termék jelenleg nem rendelhető.
+                                    </h5>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-bold text-muted text-uppercase">Mennyiség</label>
+                                    <input type="number" class="form-control form-control-lg rounded-3 bg-light border-0"
+                                           @bind="quantity"
+                                           @oninput="HandleQuantityChange"
+                                           min="1"
+                                           max="@GetMaxQty()" />
+
+                                    @if (product.MaxQuantityPerOrder.HasValue)
+                                    {
+                                        <div class="form-text small text-warning"><i class="bi bi-info-circle me-1"></i>Max: @product.MaxQuantityPerOrder db</div>
+                                    }
+                                </div>
+                                <div class="col-md-8">
+                                    <button class="btn btn-primary btn-lg w-100 rounded-pill py-3 fw-bold d-flex align-items-center justify-content-center gap-2 shadow"
+                                            @onclick="AddToCart">
+                                        <i class="bi bi-cart-plus-fill fs-4"></i> Kosárba teszem
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    @* LEÍRÁS *@
+                    <div class="product-description mb-5">
+                        <h4 class="fw-bold mb-3 border-bottom pb-2 text-dark">Termékleírás</h4>
+                        <div class="text-muted lh-lg" style="white-space: pre-line; overflow-wrap: break-word;">
+                            @product.LongDescription
+                        </div>
+                    </div>
+
+                    @* VÉLEMÉNYEK SZEKCIÓ *@
+                    <div class="reviews-section mt-5 pt-4 border-top">
+                        <h4 class="fw-bold mb-4">Vásárlói vélemények</h4>
+
+                        <AuthorizeView>
+                            <Authorized>
+                                @if (hasUserAlreadyReviewed)
+                                {
+                                    <div class="alert alert-info rounded-4 border-0 shadow-sm d-flex align-items-center p-3 mb-4">
+                                        <i class="bi bi-info-circle-fill fs-4 me-3 text-primary"></i>
+                                        <div class="small fw-semibold">Ön már értékelte ezt a terméket. Köszönjük a visszajelzését!</div>
+                                    </div>
+                                }
+                                else if (!canUserReview)
+                                {
+                                    <div class="alert alert-light rounded-4 border-0 shadow-sm d-flex align-items-center p-3 mb-4 border-start border-4 border-warning">
+                                        <i class="bi bi-cart-x fs-4 me-3 text-warning"></i>
+                                        <div class="small fw-semibold text-muted">
+                                            Véleményt csak a termék megvásárlása és a rendelés teljesítése után írhat.
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="card border-0 bg-light rounded-4 p-4 mb-4 shadow-sm">
+                                        <h6 class="fw-bold mb-3">Írja meg véleményét!</h6>
+                                        <div class="mb-3">
+                                            <label class="small text-muted d-block mb-2">Értékelés:</label>
+                                            <div class="star-rating-input fs-3 text-warning">
+                                                @for (int i = 1; i <= 5; i++)
+                                                {
+                                                    int starIndex = i;
+                                                    <i class="bi @(starIndex <= newReview.Rating ? "bi-star-fill" : "bi-star")"
+                                                       style="cursor:pointer; transition: transform 0.2s;"
+                                                       @onclick="() => newReview.Rating = starIndex"></i>
+                                                }
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <textarea class="form-control border-0 rounded-3 shadow-sm" rows="3"
+                                                      placeholder="Ossza meg tapasztalatait a termékről..."
+                                                      @bind="newReview.Comment"></textarea>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <button class="btn btn-dark rounded-pill px-4 fw-bold"
+                                                    @onclick="SubmitReview"
+                                                    disabled="@(newReview.Rating == 0 || isSubmittingReview)">
+                                                @if (isSubmittingReview)
+                                                {
+                                                    <span class="spinner-border spinner-border-sm me-2"></span>
+                                                }
+                                                Vélemény beküldése
+                                            </button>
+                                            @if (newReview.Rating == 0)
+                                            {
+                                                <small class="text-muted">Kérjük, válasszon egy csillagot!</small>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </Authorized>
+                            <NotAuthorized>
+                                <div class="alert alert-secondary rounded-4 border-0 small text-center shadow-sm">
+                                    A vélemény írásához kérjük <a href="Account/Login" class="fw-bold">jelentkezzen be</a>.
+                                    <br /><span class="text-muted">(Csak regisztrált vásárlóink értékelhetik a terméket.)</span>
+                                </div>
+                            </NotAuthorized>
+                        </AuthorizeView>
+
+                        @if (!reviews.Any())
+                        {
+                            <div class="text-center py-4">
+                                <i class="bi bi-chat-dots text-muted fs-1 opacity-25"></i>
+                                <p class="text-muted italic small mt-2">Még nem érkezett vélemény ehhez a termékhez.</p>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="review-list">
+                                @foreach (var review in reviews)
+                                {
+                                    <div class="review-item mb-4 border-bottom pb-3 animate__animated animate__fadeIn">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <span class="fw-bold">@review.UserName</span>
+                                            <small class="text-muted">@review.CreatedAt.ToString("yyyy.MM.dd.")</small>
+                                        </div>
+                                        <div class="text-warning small mb-2">
+                                            <StarRating Rating="review.Rating" />
+                                        </div>
+                                        <p class="text-muted small mb-0" style="white-space: pre-line;">@review.Comment</p>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (similarProducts.Any())
+        {
+            <div class="mt-5 pt-5 border-top">
+                <h3 class="fw-bold mb-4">Ezek is érdekelhetik</h3>
+                <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-4">
+                    @foreach (var p in similarProducts)
+                    {
+                        <div class="col">
+                            <div class="card h-100 border-0 shadow-sm rounded-4 overflow-hidden product-card"
+                                 @onclick="@(() => NavigationManager.NavigateTo($"/product/{p.Id}/{GenerateSlug(p.Name)}"))" style="cursor: pointer;">
+                                <div class="p-3 bg-light text-center">
+                                    <img src="@p.ImageUrl" class="rounded-3" style="height: 160px; width: 100%; object-fit: contain; background: white;" />
+                                </div>
+                                <div class="card-body">
+                                    <h6 class="fw-bold text-dark mb-1 text-truncate">@p.Name</h6>
+                                    <p class="text-primary fw-bold mb-0">@p.Price.ToString("N0") Ft</p>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@* --- KÉP NAGYÍTÁS MODAL (LIGHTBOX) --- *@
+@if (showLightbox)
+{
+    <div class="modal d-block animate__animated animate__fadeIn" tabindex="-1"
+         style="background: rgba(0,0,0,0.9); z-index: 9999;" @onclick="CloseLightbox">
+
+        <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-4"
+                style="z-index: 10000;" @onclick="CloseLightbox"></button>
+
+        <div class="modal-dialog modal-dialog-centered modal-xl">
+            <div class="modal-content border-0 bg-transparent">
+                <div class="modal-body p-0 text-center">
+                    <img src="@selectedImageUrl" class="img-fluid rounded-3 shadow-lg"
+                         style="max-height: 90vh; width: auto;" @onclick:stopPropagation />
+                </div>
+                @if (!string.IsNullOrEmpty(product?.Name))
+                {
+                    <div class="text-center mt-3 text-white">
+                        <h5 class="fw-bold">@product.Name</h5>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@* --- KÖZPONTI TOAST RENDSZER --- *@
+@if (showToast)
+{
+    <div class="position-fixed bottom-0 start-50 translate-middle-x p-3" style="z-index: 3000;">
+        <div class="toast show border-0 shadow-lg rounded-pill px-4 py-2 d-flex align-items-center animate-toast @(isErrorToast ? "bg-danger text-white" : "bg-dark text-white")">
+            @if (isErrorToast)
+            {
+                <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+            }
+            else
+            {
+                <i class="bi bi-check-circle-fill text-success me-2 fs-5"></i>
+            }
+            <span>@toastMessage</span>
+        </div>
+    </div>
+}
+
+<style>
+    .animate-toast {
+        animation: slideInUp 0.4s ease-out;
+    }
+
+    @@keyframes slideInUp {
+        from {
+            transform: translateY(100%);
+            opacity: 0;
+        }
+
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    .product-card {
+        transition: all 0.3s ease;
+    }
+
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+        }
+
+    .star-rating-input i:hover {
+        transform: scale(1.2);
+    }
+
+    .img-zoom-container img {
+        transition: transform 0.3s ease;
+    }
+
+    .img-zoom-container:hover img {
+        transform: scale(1.02);
+    }
+
+    .gallery-thumb {
+        width: 80px;
+        height: 80px;
+        cursor: pointer;
+        border-radius: 12px;
+        border: 2px solid #eee;
+        overflow: hidden;
+        flex-shrink: 0;
+        transition: all 0.2s ease;
+        background: #f8f9fa;
+        padding: 5px;
+    }
+
+        .gallery-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .gallery-thumb.active {
+            border-color: #0d6efd;
+            box-shadow: 0 0 10px rgba(13,110,253,0.2);
+            background: white;
+        }
+
+        .gallery-thumb:hover {
+            border-color: #0d6efd;
+            opacity: 0.8;
+        }
+
+    .custom-scrollbar::-webkit-scrollbar {
+        height: 6px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #ddd;
+        border-radius: 10px;
+    }
+</style>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [Parameter] public string? Slug { get; set; }
+
+    private Product? product;
+    private List<Product> similarProducts = new();
+    private List<ProductReview> reviews = new();
+    private ProductReview newReview = new() { Rating = 0 };
+
+    private int quantity = 1;
+    private bool isLoading = true;
+
+    private string deliveryTime = "";
+    private string backorderDeliveryTime = "";
+
+    // Toast kezelés
+    private bool showToast = false;
+    private bool isErrorToast = false;
+    private string toastMessage = "";
+
+    private bool isSubmittingReview = false;
+    private bool hasUserAlreadyReviewed = false;
+    private bool canUserReview = false;
+    private double averageRating = 0;
+    private bool isTestingMode = false;
+
+    // Képkezelés
+    private string selectedImageUrl = "";
+    private bool showLightbox = false;
+
+    private void OpenLightbox() => showLightbox = true;
+    private void CloseLightbox() => showLightbox = false;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        isLoading = true;
+        showToast = false;
+        quantity = 1;
+        newReview = new() { Rating = 0 };
+        showLightbox = false;
+
+        await Settings.LoadSettingsAsync();
+        deliveryTime = Settings.GetString("DeliveryTime", "2-4 munkanap");
+        backorderDeliveryTime = Settings.GetString("BackorderDeliveryTime", "5-10 munkanap");
+
+        using var context = DbFactory.CreateDbContext();
+
+        product = await context.Products
+            .Include(p => p.GalleryImages)
+            .Include(p => p.Category)
+            .FirstOrDefaultAsync(p => p.Id == Id && p.IsActive);
+
+        if (product != null)
+        {
+            selectedImageUrl = product.ImageUrl;
+            await LoadReviews();
+            await CheckUserReviewPermissions();
+
+            var allIds = await context.Products
+                .Where(p => p.Id != Id && p.CategoryId == product.CategoryId && p.IsActive)
+                .Select(p => p.Id).ToListAsync();
+
+            var randomIds = allIds.OrderBy(x => Random.Shared.Next()).Take(4).ToList();
+            similarProducts = await context.Products.Where(p => randomIds.Contains(p.Id)).ToListAsync();
+        }
+        isLoading = false;
+    }
+
+    private async Task LoadReviews()
+    {
+        using var context = DbFactory.CreateDbContext();
+        reviews = await context.ProductReviews
+            .Where(r => r.ProductId == Id && r.IsApproved)
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync();
+
+        averageRating = reviews.Any() ? reviews.Average(r => r.Rating) : 0;
+    }
+
+    private async Task CheckUserReviewPermissions()
+    {
+        if (isTestingMode) { canUserReview = true; return; }
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            using var context = DbFactory.CreateDbContext();
+
+            hasUserAlreadyReviewed = await context.ProductReviews
+                .AnyAsync(r => r.ProductId == Id && r.UserId == userId);
+
+            canUserReview = await context.Orders
+                .Where(o => o.UserId == userId && o.Status == OrderStatus.Teljesítve)
+                .AnyAsync(o => o.Items.Any(i => i.ProductId == Id));
+
+            if (user.IsInRole("Admin"))
+                canUserReview = true;
+        }
+    }
+
+    private async Task SubmitReview()
+    {
+        if (newReview.Rating == 0 || !canUserReview) return;
+
+        isSubmittingReview = true;
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            using var context = DbFactory.CreateDbContext();
+            var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var dbUser = await context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+
+            newReview.ProductId = Id;
+            newReview.UserId = userId;
+            newReview.UserName = dbUser?.FullName ?? user.Identity.Name ?? "Vásárló";
+            newReview.CreatedAt = DateTime.Now;
+            newReview.IsApproved = false;
+
+            context.ProductReviews.Add(newReview);
+            await context.SaveChangesAsync();
+
+            // --- JAVÍTOTT TOAST LOGIKA ---
+            toastMessage = "Köszönjük! Véleményét hamarosan jóváhagyjuk.";
+            isErrorToast = false;
+            showToast = true;
+
+            newReview = new() { Rating = 0 };
+            await CheckUserReviewPermissions();
+            StateHasChanged();
+
+            await Task.Delay(5000);
+            showToast = false;
+            StateHasChanged();
+        }
+        isSubmittingReview = false;
+    }
+
+    private int GetMaxQty()
+    {
+        if (product == null) return 99;
+        int limit = 999;
+        if (product.StrictStockControl) limit = product.Stock;
+        if (product.MaxQuantityPerOrder.HasValue && product.MaxQuantityPerOrder.Value > 0)
+            limit = Math.Min(limit, product.MaxQuantityPerOrder.Value);
+        return limit;
+    }
+
+    private void HandleQuantityChange(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            int max = GetMaxQty();
+            quantity = val;
+            if (quantity > max) quantity = max;
+            if (quantity < 1) quantity = 1;
+        }
+    }
+
+    private async Task AddToCart()
+    {
+        if (product != null)
+        {
+            try
+            {
+                int max = GetMaxQty();
+                if (quantity > max) quantity = max;
+
+                await CartService.AddToCartAsync(product, quantity);
+
+                toastMessage = $"{product.Name} a kosárba került!";
+                isErrorToast = false;
+                showToast = true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                toastMessage = ex.Message;
+                isErrorToast = true;
+                showToast = true;
+            }
+            catch (Exception)
+            {
+                toastMessage = "Hiba történt a kosárba helyezéskor.";
+                isErrorToast = true;
+                showToast = true;
+            }
+
+            StateHasChanged();
+            await Task.Delay(3000);
+            showToast = false;
+            StateHasChanged();
+        }
+    }
+
+    private string GenerateProductSchema()
+    {
+        if (product == null) return "";
+
+        var availability = product.Stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock";
+        var price = product.Price.ToString("0.00", CultureInfo.InvariantCulture);
+        var images = new List<string> { GetAbsoluteUrl(product.ImageUrl) };
+        if (product.GalleryImages != null) images.AddRange(product.GalleryImages.Select(i => GetAbsoluteUrl(i.ImageUrl)));
+        var imagesJson = string.Join(",", images.Select(i => $"\"{i}\""));
+
+        return $$"""
+        {
+          "@context": "https://schema.org/",
+          "@type": "Product",
+          "name": "{{product.Name}}",
+          "image": [{{imagesJson}}],
+          "description": "{{product.ShortDescription?.Replace("\"", "'")}}",
+          "sku": "{{product.Id}}",
+          "brand": {
+            "@type": "Brand",
+            "name": "Modern Webshop"
+          },
+          "offers": {
+            "@type": "Offer",
+            "url": "{{NavigationManager.Uri}}",
+            "priceCurrency": "HUF",
+            "price": "{{price}}",
+            "availability": "{{availability}}",
+            "itemCondition": "https://schema.org/NewCondition"
+          },
+          "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": "{{averageRating.ToString("0.0", CultureInfo.InvariantCulture)}}",
+            "reviewCount": "{{reviews.Count}}"
+          }
+        }
+        """;
+    }
+
+    private string GetAbsoluteUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return "";
+        if (url.StartsWith("http")) return url;
+        return new Uri(new Uri(NavigationManager.BaseUri), url).ToString();
+    }
+
+    private string GenerateSlug(string name)
+    {
+        string slug = name.ToLower();
+        slug = Regex.Replace(slug, @"[áàäâ]", "a");
+        slug = Regex.Replace(slug, @"[éèëê]", "e");
+        slug = Regex.Replace(slug, @"[íìïî]", "i");
+        slug = Regex.Replace(slug, @"[óòöőô]", "o");
+        slug = Regex.Replace(slug, @"[úùüűû]", "u");
+        slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
+        slug = Regex.Replace(slug, @"\s+", "-").Trim('-');
+        return slug;
+    }
+}
